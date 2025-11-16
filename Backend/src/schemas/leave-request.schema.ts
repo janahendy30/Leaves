@@ -13,8 +13,8 @@ export class LeaveRequestChange {
   @Prop({ required: true })
   changedAt: Date;
 
-  @Prop({ required: true })
-  changedByUserId: string; // employee or HR
+  @Prop({ type: Types.ObjectId, ref: 'Employee', required: true })
+  changedByUserId: Types.ObjectId;
 
   @Prop({ type: [String], default: [] })
   changedFields: string[]; // e.g. ["startDate", "endDate"]
@@ -34,11 +34,14 @@ export const LeaveRequestChangeSchema =
 
 @Schema({ timestamps: true })
 export class LeaveRequest extends Document {
-  //@Prop({ required: true })
-  //employeeId: string; // from Employee Profile
+  @Prop({ type: Types.ObjectId, ref: 'Employee', required: true })
+employeeId: Types.ObjectId;
 
-  //@Prop()
-  //employeeName?: string; // denormalized for reporting
+@Prop({ type: Types.ObjectId, ref: 'Department' })
+departmentId?: Types.ObjectId;
+
+@Prop({ type: Types.ObjectId, ref: 'Position' })
+positionId?: Types.ObjectId; 
 
   @Prop({ type: Types.ObjectId, ref: LeaveType.name, required: true })
   leaveType: Types.ObjectId;
@@ -72,8 +75,8 @@ export class LeaveRequest extends Document {
   })
   status: LeaveRequestStatus;
 
-  //@Prop()
-  //managerId?: string; // from Org Structure
+  @Prop({ type: Types.ObjectId, ref: 'Employee' })
+managerId: Types.ObjectId;
 
   @Prop()
   managerDecisionAt?: Date;
@@ -81,8 +84,8 @@ export class LeaveRequest extends Document {
   @Prop()
   managerComment?: string;
 
-  @Prop()
-  hrAdminId?: string;
+  @Prop({ type: Types.ObjectId, ref: 'Employee' })
+hrAdminId?: Types.ObjectId;
 
   @Prop()
   hrDecisionAt?: Date;

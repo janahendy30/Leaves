@@ -8,11 +8,17 @@ import { LeaveRequest } from './leave-request.schema';
 
 @Schema({ timestamps: true })
 export class LeavePatternFlag extends Document {
-  //@Prop({ required: true })
-  //employeeId: string; // employee being flagged
+  @Prop({ type: Types.ObjectId, ref: 'Employee', required: true })
+employeeId: Types.ObjectId;
 
- // @Prop({ required: true })
-  //managerId: string; // who raised the flag
+ @Prop({ type: Types.ObjectId, ref: 'Employee' })
+ managerId: Types.ObjectId;
+
+ @Prop({ type: Types.ObjectId, ref: 'Department' })
+departmentId?: Types.ObjectId;
+
+@Prop({ type: Types.ObjectId, ref: 'Position' })
+positionId?: Types.ObjectId; 
 
   @Prop({ type: [Types.ObjectId], ref: LeaveRequest.name, default: [] })
   relatedRequests: Types.ObjectId[];
