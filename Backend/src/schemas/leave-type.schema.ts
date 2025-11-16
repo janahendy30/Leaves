@@ -1,7 +1,6 @@
-
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
-import { LeaveCategory } from './leaves.enums';
+import { LeaveCategory, ApprovalWorkflow } from './leaves.enums';
 
 @Schema({ timestamps: true })
 export class LeaveType extends Document {
@@ -23,6 +22,18 @@ export class LeaveType extends Document {
   @Prop()
   maxContinuousDays?: number; // optional cap per request
 
+  // REQ-009: Minimum days before start date (e.g., submit 3 days before)
+  @Prop({ default: 0 })
+  minNoticeDays: number;
+
+  // REQ-009: Approval workflow configuration
+  @Prop({
+    type: String,
+    enum: ApprovalWorkflow,
+    default: ApprovalWorkflow.MANAGER_THEN_HR,
+  })
+  approvalWorkflow: ApprovalWorkflow;
+
   @Prop({ default: false })
   requiresDocument: boolean; // e.g. medical certificate
 
@@ -35,8 +46,8 @@ export class LeaveType extends Document {
   @Prop()
   maxTimesPerEmployee?: number; // e.g. number of maternity leaves (BR 40)
 
-  @Prop()
-  payCode?: string; // link to Payroll pay code (BR 6)
+  //@Prop()
+  //payCode?: string; // link to Payroll pay code (BR 6)
 
   @Prop({ default: true })
   isActive: boolean;

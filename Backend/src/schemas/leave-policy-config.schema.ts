@@ -35,6 +35,16 @@ export class LeavePolicyConfig extends Document {
 
   @Prop({ default: true })
   enableBlockedPeriods: boolean;
+
+  // REQ-005: Update Entitlement Calculations/Scheduling
+  @Prop()
+  lastEntitlementCalculationDate?: Date; // Last time entitlement calculations ran
+
+  @Prop()
+  entitlementCalculationSchedule?: string; // Cron expression or schedule config (e.g., "0 0 1 * *" for monthly on 1st)
+
+  @Prop({ default: false })
+  isInitialized: boolean; // REQ-001: Track if policy configuration has been initiated
 }
 
 export const LeavePolicyConfigSchema =
