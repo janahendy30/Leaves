@@ -1,13 +1,14 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document } from 'mongoose';
+import { Document, Types } from 'mongoose';
 
 @Schema({ timestamps: true })
 export class ApprovalDelegation extends Document {
-  //@Prop({ required: true })
-  //managerId: string; // original approver (line manager)
+   @Prop({ type: Types.ObjectId, ref: 'Employee' })
+managerId: Types.ObjectId;
 
-  //@Prop({ required: true })
-  //delegateId: string; // delegated approver
+
+  @Prop({ type: Types.ObjectId, ref: 'Employee', required: true })
+delegateId: Types.ObjectId;
 
   @Prop({ required: true })
   startDate: Date;

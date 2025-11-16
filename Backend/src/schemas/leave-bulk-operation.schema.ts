@@ -8,8 +8,8 @@ import { LeaveRequest } from './leave-request.schema';
 
 @Schema({ timestamps: true })
 export class LeaveBulkOperation extends Document {
- // @Prop({ required: true })
-  //initiatedByUserId: string; // HR admin
+ @Prop({ type: Types.ObjectId, ref: 'Employee', required: true })
+initiatedByUserId: Types.ObjectId;
 
   @Prop({ type: String, enum: BulkOperationType, required: true })
   type: BulkOperationType; // APPROVE / REJECT / FINALIZE

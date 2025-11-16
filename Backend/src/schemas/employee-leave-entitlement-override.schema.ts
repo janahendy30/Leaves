@@ -5,8 +5,8 @@ import { LeavePackage } from './leave-package.schema';
 
 @Schema({ timestamps: true })
 export class EmployeeEntitlementOverride extends Document {
-  //@Prop({ required: true })
-  //employeeId: string; // from Employee Profile subsystem
+  @Prop({ type: Types.ObjectId, ref: 'Employee', required: true })
+employeeId: Types.ObjectId;
 
   @Prop({ type: Types.ObjectId, ref: LeaveType.name, required: true })
   leaveType: Types.ObjectId;
@@ -26,8 +26,8 @@ export class EmployeeEntitlementOverride extends Document {
   @Prop()
   reason?: string; // why override exists
 
-  @Prop()
-  createdByUserId?: string; // HR admin
+  @Prop({ type: Types.ObjectId, ref: 'Employee' })
+  createdByUserId?: Types.ObjectId;
 }
 
 export const EmployeeEntitlementOverrideSchema =
