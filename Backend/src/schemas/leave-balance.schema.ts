@@ -6,8 +6,8 @@ import { LeavePackage } from './leave-package.schema';
 
 @Schema({ timestamps: true })
 export class LeaveBalance extends Document {
-  @Prop({ required: true })
-  employeeId: string; // from Employee Profile subsystem
+  //@Prop({ required: true })
+  //employeeId: string; // from Employee Profile subsystem
 
   @Prop({ type: Types.ObjectId, ref: LeaveType.name, required: true })
   leaveType: Types.ObjectId;

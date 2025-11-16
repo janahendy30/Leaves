@@ -6,8 +6,8 @@ import { AdjustmentSource } from './leaves.enums';
 
 @Schema({ timestamps: true })
 export class LeaveAdjustmentLog extends Document {
-  @Prop({ required: true })
-  employeeId: string;
+  //@Prop({ required: true })
+  //employeeId: string;
 
   @Prop({ type: Types.ObjectId, ref: LeaveType.name, required: true })
   leaveType: Types.ObjectId;

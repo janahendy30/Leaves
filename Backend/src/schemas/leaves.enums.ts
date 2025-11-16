@@ -1,4 +1,4 @@
-// src/leaves/schemas/leaves.enums.ts
+
 export enum LeaveCategory {
   ANNUAL = 'ANNUAL',
   OTHER = 'OTHER',
@@ -31,6 +31,7 @@ export enum LeaveRequestStatus {
   REJECTED = 'REJECTED',
   CANCELLED = 'CANCELLED',
   ESCALATED = 'ESCALATED',
+  FINALIZED = 'FINALIZED', // HR has finalized the approved request
 }
 
 export enum ResetCriterion {
@@ -48,3 +49,53 @@ export enum AdjustmentSource {
   REQUEST_CANCELLATION = 'REQUEST_CANCELLATION',
   ENCASHMENT = 'ENCASHMENT',
 }
+
+export enum ApprovalWorkflow {
+  MANAGER_ONLY = 'MANAGER_ONLY',
+  MANAGER_THEN_HR = 'MANAGER_THEN_HR',
+  HR_ONLY = 'HR_ONLY',
+  AUTO_APPROVE = 'AUTO_APPROVE',
+}
+
+export enum IrregularPatternType {
+  FREQUENT_SHORT_LEAVES = 'FREQUENT_SHORT_LEAVES',
+  PATTERN_ABUSE = 'PATTERN_ABUSE',
+  SUSPICIOUS_TIMING = 'SUSPICIOUS_TIMING',
+  EXCESSIVE_ABSENCES = 'EXCESSIVE_ABSENCES',
+  OTHER = 'OTHER',
+}
+
+export enum PatternFlagStatus {
+  OPEN = 'OPEN',
+  REVIEWED = 'REVIEWED',
+  RESOLVED = 'RESOLVED',
+  DISMISSED = 'DISMISSED',
+}
+
+export enum BulkOperationType {
+  APPROVE = 'APPROVE',
+  REJECT = 'REJECT',
+  FINALIZE = 'FINALIZE',
+}
+
+export enum BulkOperationStatus {
+  PENDING = 'PENDING',
+  IN_PROGRESS = 'IN_PROGRESS',
+  COMPLETED = 'COMPLETED',
+  FAILED = 'FAILED',
+}
+
+export enum PayrollSyncType {
+  DEDUCTION = 'DEDUCTION',
+  ENCASHMENT = 'ENCASHMENT',
+  FINAL_SETTLEMENT = 'FINAL_SETTLEMENT',
+}
+
+export enum PayrollSyncStatus {
+  PENDING = 'PENDING',
+  SUCCESS = 'SUCCESS',
+  FAILED = 'FAILED',
+  RETRY = 'RETRY',
+}
+
+

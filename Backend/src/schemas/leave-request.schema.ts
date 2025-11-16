@@ -1,16 +1,44 @@
-
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, Types } from 'mongoose';
 import { LeaveType } from './leave-type.schema';
-import { LeaveRequestStatus } from './leaves.enums';
+import {
+  LeaveRequestStatus,
+  PayrollSyncStatus,
+  PayrollSyncType,
+} from './leaves.enums';
+
+// REQ-017: sub-document for modification history
+@Schema()
+export class LeaveRequestChange {
+  @Prop({ required: true })
+  changedAt: Date;
+
+  @Prop({ required: true })
+  changedByUserId: string; // employee or HR
+
+  @Prop({ type: [String], default: [] })
+  changedFields: string[]; // e.g. ["startDate", "endDate"]
+
+  @Prop()
+  comment?: string; // reason for modification
+
+  @Prop({ type: String, enum: LeaveRequestStatus })
+  previousStatus?: LeaveRequestStatus;
+
+  @Prop({ type: String, enum: LeaveRequestStatus })
+  newStatus?: LeaveRequestStatus;
+}
+
+export const LeaveRequestChangeSchema =
+  SchemaFactory.createForClass(LeaveRequestChange);
 
 @Schema({ timestamps: true })
 export class LeaveRequest extends Document {
-  @Prop({ required: true })
-  employeeId: string; // from Employee Profile
+  //@Prop({ required: true })
+  //employeeId: string; // from Employee Profile
 
-  @Prop()
-  employeeName?: string; // denormalized for reporting
+  //@Prop()
+  //employeeName?: string; // denormalized for reporting
 
   @Prop({ type: Types.ObjectId, ref: LeaveType.name, required: true })
   leaveType: Types.ObjectId;
@@ -37,11 +65,15 @@ export class LeaveRequest extends Document {
   attachmentUrls: string[]; // REQ-016
 
   // Workflow
-  @Prop({ type: String, enum: LeaveRequestStatus, default: LeaveRequestStatus.PENDING_MANAGER })
+  @Prop({
+    type: String,
+    enum: LeaveRequestStatus,
+    default: LeaveRequestStatus.PENDING_MANAGER,
+  })
   status: LeaveRequestStatus;
 
-  @Prop()
-  managerId?: string; // from Org Structure
+  //@Prop()
+  //managerId?: string; // from Org Structure
 
   @Prop()
   managerDecisionAt?: Date;
@@ -79,17 +111,44 @@ export class LeaveRequest extends Document {
   @Prop({ default: 0 })
   excessDaysConvertedToUnpaid: number;
 
-  @Prop()
-  timeManagementEventId?: string; // ID pushed to Time Management
+  //@Prop()
+  //timeManagementEventId?: string; // ID pushed to Time Management
 
-  @Prop()
-  payrollImpactRef?: string; // link to payroll adjustment/encashment
+  //@Prop()
+  //payrollImpactRef?: string; // link to payroll adjustment/encashment
+
+  // REQ-042: Enhanced Payroll Synchronization Tracking
+ // @Prop({ type: String, enum: PayrollSyncStatus })
+  //payrollSyncStatus?: PayrollSyncStatus; // Status of payroll synchronization
+
+  //@Prop()
+ // payrollSyncAttemptedAt?: Date; // When last sync was attempted
+
+  //@Prop()
+  //payrollSyncCompletedAt?: Date; // When sync completed successfully
+
+  //@Prop()
+  //payrollSyncError?: string; // Error message if sync failed
+
+  //@Prop({ default: 0 })
+  //payrollSyncRetryCount: number; // Number of retry attempts
+
+  //@Prop({ type: String, enum: PayrollSyncType })
+  //payrollSyncType?: PayrollSyncType; // Type of payroll sync operation
 
   @Prop({ default: false })
   requiresDocumentVerification: boolean; // REQ-028
 
   @Prop({ default: false })
   documentVerified: boolean;
+
+  // REQ-017: Modification tracking
+  @Prop({ default: 1 })
+  version: number; // Increment on each modification
+
+  @Prop({ type: [LeaveRequestChangeSchema], default: [] })
+  changeHistory: LeaveRequestChange[]; // full history of changes
 }
 
-export const LeaveRequestSchema = SchemaFactory.createForClass(LeaveRequest);
+export const LeaveRequestSchema =
+  SchemaFactory.createForClass(LeaveRequest);
