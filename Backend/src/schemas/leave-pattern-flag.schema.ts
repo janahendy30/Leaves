@@ -14,11 +14,11 @@ employeeId: Types.ObjectId;
  @Prop({ type: Types.ObjectId, ref: 'Employee' })
  managerId: Types.ObjectId;
 
- @Prop({ type: Types.ObjectId, ref: 'Department' })
-departmentId?: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'Department' })
+  departmentId?: Types.ObjectId;
 
-@Prop({ type: Types.ObjectId, ref: 'Position' })
-positionId?: Types.ObjectId; 
+  @Prop({ type: Types.ObjectId, ref: 'Position' })
+  positionId?: Types.ObjectId; 
 
   @Prop({ type: [Types.ObjectId], ref: LeaveRequest.name, default: [] })
   relatedRequests: Types.ObjectId[];
