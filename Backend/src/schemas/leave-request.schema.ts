@@ -34,14 +34,15 @@ export const LeaveRequestChangeSchema =
 
 @Schema({ timestamps: true })
 export class LeaveRequest extends Document {
+
   @Prop({ type: Types.ObjectId, ref: 'Employee', required: true })
-employeeId: Types.ObjectId;
+  employeeId: Types.ObjectId;
 
-@Prop({ type: Types.ObjectId, ref: 'Department' })
-departmentId?: Types.ObjectId;
+  @Prop({ type: Types.ObjectId, ref: 'Department' })
+  departmentId?: Types.ObjectId;
 
-@Prop({ type: Types.ObjectId, ref: 'Position' })
-positionId?: Types.ObjectId; 
+  @Prop({ type: Types.ObjectId, ref: 'Position' })
+  positionId?: Types.ObjectId; 
 
   @Prop({ type: Types.ObjectId, ref: LeaveType.name, required: true })
   leaveType: Types.ObjectId;
@@ -76,7 +77,7 @@ positionId?: Types.ObjectId;
   status: LeaveRequestStatus;
 
   @Prop({ type: Types.ObjectId, ref: 'Employee' })
-managerId: Types.ObjectId;
+  managerId: Types.ObjectId;
 
   @Prop()
   managerDecisionAt?: Date;
@@ -85,7 +86,7 @@ managerId: Types.ObjectId;
   managerComment?: string;
 
   @Prop({ type: Types.ObjectId, ref: 'Employee' })
-hrAdminId?: Types.ObjectId;
+  hrAdminId?: Types.ObjectId;
 
   @Prop()
   hrDecisionAt?: Date;
@@ -114,8 +115,11 @@ hrAdminId?: Types.ObjectId;
   @Prop({ default: 0 })
   excessDaysConvertedToUnpaid: number;
 
-  //@Prop()
-  //timeManagementEventId?: string; // ID pushed to Time Management
+  @Prop({ type: Types.ObjectId, ref: 'AttendanceRecord' })
+  timeManagementEventId?: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId, ref: 'Employee', required: true })
+  employmentStatus: Types.ObjectId;
 
   //@Prop()
   //payrollImpactRef?: string; // link to payroll adjustment/encashment
