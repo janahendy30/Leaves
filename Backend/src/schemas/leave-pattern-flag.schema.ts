@@ -41,6 +41,9 @@ positionId?: Types.ObjectId;
 
   @Prop()
   resolvedByUserId?: string;
+  //@Prop({ type: Types.ObjectId, ref: 'Employee' })
+  //resolvedByUserId?: Types.ObjectId;   think about it later but not mandatory
+
 
   @Prop()
   resolvedAt?: Date;

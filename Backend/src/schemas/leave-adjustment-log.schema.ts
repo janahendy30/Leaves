@@ -33,8 +33,8 @@ employeeId: Types.ObjectId;
   @Prop()
   relatedRequestId?: string; // LeaveRequest._id as string
 
-  //@Prop()
-  //elatedPayrollRef?: string;
+  //@Prop({ type: Types.ObjectId, ref: 'PayrollRunItem' })
+ //relatedPayrollRef?: Types.ObjectId;
 
   @Prop({ type: Types.ObjectId, ref: 'Employee' })
   performedByUserId?: Types.ObjectId;

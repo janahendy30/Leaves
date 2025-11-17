@@ -85,7 +85,7 @@ managerId: Types.ObjectId;
   managerComment?: string;
 
   @Prop({ type: Types.ObjectId, ref: 'Employee' })
-hrAdminId?: Types.ObjectId;
+  hrAdminId?: Types.ObjectId;
 
   @Prop()
   hrDecisionAt?: Date;
@@ -114,11 +114,12 @@ hrAdminId?: Types.ObjectId;
   @Prop({ default: 0 })
   excessDaysConvertedToUnpaid: number;
 
-  //@Prop()
-  //timeManagementEventId?: string; // ID pushed to Time Management
+  //@Prop({ type: Types.ObjectId, ref: 'AttendanceRecord' })
+  //timeManagementEventId?: Types.ObjectId;
 
-  //@Prop()
-  //payrollImpactRef?: string; // link to payroll adjustment/encashment
+
+  //@Prop({ type: Types.ObjectId, ref: 'PayrollRunItem' })
+ //payrollImpactRef?: Types.ObjectId; 
 
   // REQ-042: Enhanced Payroll Synchronization Tracking
  // @Prop({ type: String, enum: PayrollSyncStatus })
