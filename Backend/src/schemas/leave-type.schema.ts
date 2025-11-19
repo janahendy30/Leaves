@@ -51,12 +51,6 @@ export class LeaveType extends Document {
 
   @Prop({ default: true })
   isActive: boolean;
-
-  @Prop({ type: Types.ObjectId, ref: 'Employee', required: true })
-contractType: Types.ObjectId;
-
-@Prop({ type: Types.ObjectId, ref: 'Employee', required: true })
-hireDate: Types.ObjectId;
 }
 
 export const LeaveTypeSchema = SchemaFactory.createForClass(LeaveType);
