@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { LeavesController } from './leaves.controller';
+import { LeaveController } from './leaves.controller';
 import { LeavesService } from './leaves.service';
 import { MongooseModule } from '@nestjs/mongoose';
 import { LeaveType, LeaveTypeSchema } from './models/leave-type.schema';
@@ -23,7 +23,7 @@ import { TimeManagementModule } from '../time-management/time-management.module'
     {name:Calendar.name, schema:CalendarSchema},
     {name:Attachment.name, schema: AttachmentSchema}
   ]),EmployeeProfileModule,TimeManagementModule],
-  controllers: [LeavesController],
+  controllers: [LeaveController],
   providers: [LeavesService],
   exports:[LeavesService]
 })
