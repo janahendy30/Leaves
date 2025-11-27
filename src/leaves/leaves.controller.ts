@@ -14,7 +14,7 @@ import { RejectLeaveRequestDto } from './dto/RejectLeaveRequest.dto';
 import { FinalizeLeaveRequestDto } from './dto/FinalizeLeaveRequest.dto';
 import { HrOverrideDecisionDto } from './dto/HrOverrideDecision.dto';
 import { ProcessMultipleRequestsDto } from './dto/ProcessMultipleRequests.dto';
-import { DelegateApprovalDto } from './dto/DelegateApproval.dto';
+//import { DelegateApprovalDto } from './dto/DelegateApproval.dto';
 
 import { Roles } from './decorators/roles.decorator';
 import { RolesGuard } from './guards/roles.guard';
@@ -186,12 +186,12 @@ export class LeaveController {
     return await this.leavesService.rejectLeaveRequest(rejectLeaveRequestDto, req.user);
   }
 
-  @Get('request/manager/:managerId/pending')
-  @UseGuards(RolesGuard)
-  @Roles('Manager', 'Department Head')
-  async getPendingRequestsForManager(@Param('managerId') managerId: string) {
-    return await this.leavesService.getPendingRequestsForManager(managerId);
-  }
+  // @Get('request/manager/:managerId/pending')
+  // @UseGuards(RolesGuard)
+  // @Roles('Manager', 'Department Head')
+  // async getPendingRequestsForManager(@Param('managerId') managerId: string) {
+  //   return await this.leavesService.getPendingRequestsForManager(managerId);
+  // }
 
   // Phase 2: HR Manager Endpoints
 
@@ -245,15 +245,15 @@ export class LeaveController {
   }
 
   // Phase 2: REQ-023 - Delegate approval authority
-  @Post('delegate')
-  @UseGuards(RolesGuard)
-  @Roles('Manager', 'Department Head')
-  async delegateApprovalAuthority(@Body() delegateDto: DelegateApprovalDto) {
-    return await this.leavesService.delegateApprovalAuthority(
-      delegateDto.managerId,
-      delegateDto.delegateId,
-      delegateDto.startDate,
-      delegateDto.endDate
-    );
-  }
+  // @Post('delegate')
+  // @UseGuards(RolesGuard)
+  // @Roles('Manager', 'Department Head')
+  // async delegateApprovalAuthority(@Body() delegateDto: DelegateApprovalDto) {
+  //   return await this.leavesService.delegateApprovalAuthority(
+  //     delegateDto.managerId,
+  //     delegateDto.delegateId,
+  //     delegateDto.startDate,
+  //     delegateDto.endDate
+  //   );
+  // }
 }

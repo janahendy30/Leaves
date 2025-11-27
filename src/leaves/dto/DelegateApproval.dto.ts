@@ -1,16 +1,16 @@
-// import { IsString, IsDate } from 'class-validator';
+import { IsString, IsDate } from 'class-validator';
 
-// export class DelegateApprovalDto {
-//   @IsString()
-//   managerId: string;
+export class DelegateApprovalDto {
+  @IsString()
+  managerId: string;
 
-//   @IsString()
-//   delegateId: string;
+  @IsString()
+  delegateId: string;
 
-//   @IsDate()
-//   startDate: Date;
+  @IsDate()
+  startDate: Date;
 
-//   @IsDate()
-//   endDate: Date;
-// }
+  @IsDate()
+  endDate: Date;
+}
 
