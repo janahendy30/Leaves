@@ -27,10 +27,15 @@ import { CreateLeaveEntitlementDto } from './dto/CreateLeaveEntitlement.dto';
 import { UpdateLeaveEntitlementDto } from './dto/UpdateLeaveEntitlement.dto'; 
 import { CreateLeaveTypeDto } from './dto/CreateLeaveType.dto';
 import { UpdateLeaveTypeDto } from './dto/UpdateLeaveType.dto'; 
+import { LeaveStatus } from './enums/leave-status.enum';
+//import { NotificationService } from '../notification/notification.service'; // Assuming a notification service
+
   
 
 
 import { AccrualMethod } from './enums/accrual-method.enum';
+import { ApproveLeaveRequestDto } from './dto/ApproveLeaveRequest.dto';
+import { RejectLeaveRequestDto } from './dto/RejectLeaveRequest.dto';
 
 
 
@@ -45,7 +50,8 @@ export class LeavesService {
     @InjectModel(Attachment.name) private attachmentModel: mongoose.Model<AttachmentDocument>,
     @InjectModel(Calendar.name) private calendarModel: mongoose.Model<CalendarDocument>,
     @InjectModel(EmployeeProfile.name) private employeeProfileModel: mongoose.Model<EmployeeProfileDocument>,
-    @InjectModel(LeaveCategory.name) private leaveCategoryModel: mongoose.Model<LeaveCategoryDocument>
+    @InjectModel(LeaveCategory.name) private leaveCategoryModel: mongoose.Model<LeaveCategoryDocument>,
+    //private notificationService: NotificationService, // Assuming a Notification service is available
   ) {}
 
                               // LeavePolicy
@@ -131,26 +137,52 @@ async isBlockedDate(date: string): Promise<boolean> {
   );
 }
 
-async createLeaveRequest(createLeaveRequestDto: CreateLeaveRequestDto): Promise<LeaveRequestDocument> {
-  const { dates, employeeId } = createLeaveRequestDto;
-  const { from, to } = dates; 
-  //3shan maynf3sh date nakhdo ka string fa amalt parsing
-  const startDate = new Date(from).toISOString();
-  const endDate = new Date(to).toISOString();
-  const employeeProfile = await this.employeeProfileModel.findById(employeeId).exec();
-  if (!employeeProfile) {
-    throw new Error('Employee not found');
-  }
-  const isFromBlocked = await this.isBlockedDate(startDate);
-  const isToBlocked = await this.isBlockedDate(endDate); 
+    // Create a new leave request
+    async createLeaveRequest(createLeaveRequestDto: CreateLeaveRequestDto): Promise<LeaveRequestDocument> {
+        const { dates, employeeId, justification, attachmentId, approvalFlow } = createLeaveRequestDto;
+        const { from, to } = dates;
 
-  if (isFromBlocked || isToBlocked) {
-    throw new Error(`The requested leave dates fall on blocked periods.`);
-  }
-  const newLeaveRequest = new this.leaveRequestModel(createLeaveRequestDto);
-  return await newLeaveRequest.save();
-}
+        // Convert dates to ISO string format
+        const startDate = new Date(from).toISOString();
+        const endDate = new Date(to).toISOString();
 
+        // Fetch employee profile
+        const employeeProfile = await this.employeeProfileModel.findById(employeeId).exec();
+        if (!employeeProfile) {
+            throw new Error('Employee not found');
+        }
+
+        // Check if dates fall on blocked periods
+        const isFromBlocked = await this.isBlockedDate(startDate);
+        const isToBlocked = await this.isBlockedDate(endDate);
+        if (isFromBlocked || isToBlocked) {
+            throw new Error('The requested leave dates fall on blocked periods.');
+        }
+
+        // Handle document attachment if needed
+        if (attachmentId) {
+            const attachment = await this.attachmentModel.findById(attachmentId).exec();
+            if (!attachment) {
+                throw new Error('Attachment not found');
+            }
+        }
+
+        // Create leave request object
+        const leaveRequest = new this.leaveRequestModel({
+            ...createLeaveRequestDto,
+            status: LeaveStatus.PENDING, // Default status is PENDING
+            approvalFlow: approvalFlow || [], // Handle approval flow if provided
+        });
+
+        // Save and notify
+        const savedLeaveRequest = await leaveRequest.save();
+
+        // Notify employee and manager
+        //await this.notificationService.sendNotification(employeeId, 'Leave request submitted', 'Your leave request has been successfully submitted for approval.');
+
+        // Return saved leave request
+        return savedLeaveRequest;
+    }
 
 
 
@@ -163,25 +195,127 @@ async getLeaveRequestById(id: string): Promise<LeaveRequestDocument> {
 }
 
 
-async updateLeaveRequest(id: string, updateLeaveRequestDto: UpdateLeaveRequestDto): Promise<LeaveRequestDocument> {
-  const updateLeaveRequest= await this.leaveRequestModel.findByIdAndUpdate(id, updateLeaveRequestDto, { new: true }).exec();
-  if (!updateLeaveRequest) {
-    throw new Error(`LeavePolicy with ID ${id} not found`);
-  }
-  return updateLeaveRequest;
+    // Modify an existing leave request (update)
+    async updateLeaveRequest(id: string, updateLeaveRequestDto: UpdateLeaveRequestDto): Promise<LeaveRequestDocument> {
+        const updatedLeaveRequest = await this.leaveRequestModel
+            .findByIdAndUpdate(id, updateLeaveRequestDto, { new: true })
+            .exec();
+
+        if (!updatedLeaveRequest) {
+            throw new Error(`LeaveRequest with ID ${id} not found`);
+        }
+
+        // Notify employee about the update
+        //await this.notificationService.sendNotification(updatedLeaveRequest.employeeId, 'Leave request updated', `Your leave request with ID ${id} has been updated.`);
+
+        return updatedLeaveRequest;
+    }
+
+
+// async deleteLeaveRequest(id: string): Promise<LeaveRequestDocument> {
+//    const leaveRequest = await this.leavePolicyModel.findById(id).exec();
+
+//   if (!leaveRequest) {
+//     throw new Error(`LeavePolicy with ID ${id} not found`);
+//   }
+
+//  return await this.leaveRequestModel.findByIdAndDelete(id).exec() as LeaveRequestDocument;
+// }
+
+    // Cancel a leave request before final approval
+    async cancelLeaveRequest(id: string): Promise<LeaveRequestDocument> {
+        const leaveRequest = await this.leaveRequestModel.findById(id).exec();
+
+        if (!leaveRequest) {
+            throw new Error(`LeaveRequest with ID ${id} not found`);
+        }
+
+        if (leaveRequest.status !== LeaveStatus.PENDING) {
+            throw new Error('Only pending requests can be canceled');
+        }
+
+        // Update status to canceled
+        leaveRequest.status = LeaveStatus.CANCELLED;
+        const canceledLeaveRequest = await leaveRequest.save();
+
+        // Notify employee and manager
+        //await this.notificationService.sendNotification(canceledLeaveRequest.employeeId, 'Leave request canceled', `Your leave request with ID ${id} has been canceled.`);
+
+        return canceledLeaveRequest;
+    }
+
+// Service method to approve leave
+async approveLeaveRequest(approveLeaveRequestDto: ApproveLeaveRequestDto, user: any): Promise<LeaveRequestDocument> {
+    const { leaveRequestId, status } = approveLeaveRequestDto;
+
+    // Fetch the leave request to approve
+    const leaveRequest = await this.leaveRequestModel.findById(leaveRequestId).exec();
+    if (!leaveRequest) {
+        throw new Error(`LeaveRequest with ID ${leaveRequestId} not found`);
+    }
+
+    // Check if the status is pending
+    if (leaveRequest.status !== LeaveStatus.PENDING) {
+        throw new Error('Leave request can only be approved if it is in pending status.');
+    }
+
+    // Record the approval decision in approvalFlow
+    leaveRequest.approvalFlow.push({
+        role: user.role,  // The role of the approver (e.g., "Manager")
+        status,           // APPROVED or REJECTED
+        decidedBy: user._id, // The ID of the approver (e.g., the manager)
+        decidedAt: new Date(),
+    });
+
+    // Update the leave request status if the leave is approved
+    if (status === LeaveStatus.APPROVED) {
+        leaveRequest.status = LeaveStatus.APPROVED;
+    }
+
+    // Save the updated leave request
+    const updatedLeaveRequest = await leaveRequest.save();
+
+    // Send notifications to relevant users (employee, manager, HR)
+   // await this.notificationService.sendNotification(leaveRequest.employeeId, 'Leave request approved', `Your leave request with ID ${leaveRequestId} has been approved.`);
+  // await this.notificationService.sendNotification('HR_USER_ID', 'Leave request awaiting finalization', `Leave request with ID ${leaveRequestId} is awaiting HR finalization.`);
+
+    return updatedLeaveRequest;
 }
-  
 
+// Service method to reject leave (without justification)
+async rejectLeaveRequest(rejectLeaveRequestDto: RejectLeaveRequestDto, user: any): Promise<LeaveRequestDocument> {
+    const { leaveRequestId, status } = rejectLeaveRequestDto;
 
-async deleteLeaveRequest(id: string): Promise<LeaveRequestDocument> {
-   const leaveRequest = await this.leavePolicyModel.findById(id).exec();
+    const leaveRequest = await this.leaveRequestModel.findById(leaveRequestId).exec();
+    if (!leaveRequest) {
+        throw new Error(`LeaveRequest with ID ${leaveRequestId} not found`);
+    }
 
-  if (!leaveRequest) {
-    throw new Error(`LeavePolicy with ID ${id} not found`);
-  }
+    // Check if the status is pending
+    if (leaveRequest.status !== LeaveStatus.PENDING) {
+        throw new Error('Leave request can only be rejected if it is in pending status.');
+    }
 
- return await this.leaveRequestModel.findByIdAndDelete(id).exec() as LeaveRequestDocument;
+    // Record the rejection in the approvalFlow
+    leaveRequest.approvalFlow.push({
+        role: user.role,  // The role of the approver (e.g., "Manager")
+        status,           // REJECTED
+        decidedBy: user._id, // The ID of the approver (e.g., the manager)
+        decidedAt: new Date(),
+    });
+
+    // Update the leave request status if the leave is rejected
+    leaveRequest.status = LeaveStatus.REJECTED;
+
+    // Save the updated leave request
+    const rejectedLeaveRequest = await leaveRequest.save();
+
+    // Send notification to employee about rejection
+    //await this.notificationService.sendNotification(leaveRequest.employeeId, 'Leave request rejected', `Your leave request with ID ${leaveRequestId} has been rejected.`);
+
+    return rejectedLeaveRequest;
 }
+
                    
                           //LeaveAdjustment
 
