@@ -9,6 +9,7 @@ import { UpdateLeaveEntitlementDto } from './dto/UpdateLeaveEntitlement.dto';
 import { CreateLeaveAdjustmentDto } from './dto/CreateLeaveAdjustment.dto';
 import { CreateLeaveTypeDto } from './dto/CreateLeaveType.dto';
 import { UpdateLeaveTypeDto } from './dto/UpdateLeaveType.dto';
+import { CreateLeaveCategoryDto } from './dto/CreateLeaveCategory.dto';
 import { ApproveLeaveRequestDto } from './dto/ApproveLeaveRequest.dto';
 import { RejectLeaveRequestDto } from './dto/RejectLeaveRequest.dto';
 import { FinalizeLeaveRequestDto } from './dto/FinalizeLeaveRequest.dto';
@@ -16,37 +17,37 @@ import { HrOverrideDecisionDto } from './dto/HrOverrideDecision.dto';
 import { ProcessMultipleRequestsDto } from './dto/ProcessMultipleRequests.dto';
 //import { DelegateApprovalDto } from './dto/DelegateApproval.dto';
 
-import { Roles } from './decorators/roles.decorator';
-import { RolesGuard } from './guards/roles.guard';
+// import { Roles } from './decorators/roles.decorator';
+// import { RolesGuard } from './guards/roles.guard';
 
 @Controller('leaves')
 export class LeaveController {
   constructor(private readonly leavesService: LeavesService) {}
                        //leave policy Endpoints
   @Post('policy')
-  @UseGuards(RolesGuard) 
-  @Roles('HR Admin')
+  // @UseGuards(RolesGuard) 
+  // @Roles('HR Admin')
   async createLeavePolicy(@Body() createLeavePolicyDto: CreateLeavePolicyDto) {
     return await this.leavesService.createLeavePolicy(createLeavePolicyDto);
   }
 
   @Get('policies')
-  @UseGuards(RolesGuard)
-  @Roles('HR Admin')
+  // @UseGuards(RolesGuard)
+  // @Roles('HR Admin')
   async getLeavePolicies() {
     return await this.leavesService.getLeavePolicies();
   }
 
   @Get('policy/:id')
-  @UseGuards(RolesGuard)
-  @Roles('HR Admin')
+  // @UseGuards(RolesGuard)
+  // @Roles('HR Admin')
   async getLeavePolicyById(@Param('id') id: string) {
     return await this.leavesService.getLeavePolicyById(id);
   }
 
   @Put('policy/:id')
-  @UseGuards(RolesGuard)
-  @Roles('HR Admin')
+  // @UseGuards(RolesGuard)
+  // @Roles('HR Admin')
   async updateLeavePolicy(
     @Param('id') id: string,
     @Body() updateLeavePolicyDto: UpdateLeavePolicyDto
@@ -55,8 +56,8 @@ export class LeaveController {
   }
 
   @Delete('policy/:id')
-  @UseGuards(RolesGuard)
-  @Roles('HR Admin')
+  // @UseGuards(RolesGuard)
+  // @Roles('HR Admin')
   async deleteLeavePolicy(@Param('id') id: string) {
     return await this.leavesService.deleteLeavePolicy(id);
   }
@@ -65,21 +66,21 @@ export class LeaveController {
 
   @Post('request')
   //@UseGuards(JwtAuthGuard)  // Only authenticated users can submit a request
-  @Roles('Employee')
+  // @Roles('Employee')
   async createLeaveRequest(@Body() createLeaveRequestDto: CreateLeaveRequestDto) {
     return await this.leavesService.createLeaveRequest(createLeaveRequestDto);
   }
 
   @Get('request/:id')
-  @UseGuards(RolesGuard)
-  @Roles('Employee', 'HR Admin', 'Manager')  // Employees, HR Admin, and Manager can view leave requests
+  // @UseGuards(RolesGuard)
+  // @Roles('Employee', 'HR Admin', 'Manager')  // Employees, HR Admin, and Manager can view leave requests
   async getLeaveRequestById(@Param('id') id: string) {
     return await this.leavesService.getLeaveRequestById(id);
   }
 
   @Put('request/:id')
-  @UseGuards( RolesGuard)
-  @Roles('Employee', 'HR Admin', 'Manager')  // Employee can update their own request, HR Admin and Manager can update any
+  // @UseGuards( RolesGuard)
+  // @Roles('Employee', 'HR Admin', 'Manager')  // Employee can update their own request, HR Admin and Manager can update any
   async updateLeaveRequest(
     @Param('id') id: string,
     @Body() updateLeaveRequestDto: UpdateLeaveRequestDto
@@ -88,23 +89,23 @@ export class LeaveController {
   }
 
   @Delete('request/:id')
-  @UseGuards(RolesGuard)
-  @Roles('Employee', 'HR Admin')  // Employees can delete their own leave requests, HR Admin can delete any
+  // @UseGuards(RolesGuard)
+  // @Roles('Employee', 'HR Admin')  // Employees can delete their own leave requests, HR Admin can delete any
   async deleteLeaveRequest(@Param('id') id: string) {
     return await this.leavesService.deleteLeaveRequest(id);
   }
 
   // Leave Entitlement Endpoints
   @Post('entitlement')
-  @UseGuards(RolesGuard)
-  @Roles('HR Admin')  // Only HR Admin can create leave entitlement
+  // @UseGuards(RolesGuard)
+  // @Roles('HR Admin')  // Only HR Admin can create leave entitlement
   async createLeaveEntitlement(@Body() createLeaveEntitlementDto: CreateLeaveEntitlementDto) {
     return await this.leavesService.createLeaveEntitlement(createLeaveEntitlementDto);
   }
 
   @Get('entitlement/:employeeId/:leaveTypeId')
-  @UseGuards(RolesGuard)
-  @Roles('HR Admin', 'Manager')  // HR Admin and Manager can view entitlements
+  // @UseGuards(RolesGuard)
+  // @Roles('HR Admin', 'Manager')  // HR Admin and Manager can view entitlements
   async getLeaveEntitlement(
     @Param('employeeId') employeeId: string,
     @Param('leaveTypeId') leaveTypeId: string
@@ -113,8 +114,8 @@ export class LeaveController {
   }
 
   @Put('entitlement/:id')
-  @UseGuards(RolesGuard)
-  @Roles('HR Admin')  // Only HR Admin can update leave entitlement
+  // @UseGuards(RolesGuard)
+  // @Roles('HR Admin')  // Only HR Admin can update leave entitlement
   async updateLeaveEntitlement(
     @Param('id') id: string,
     @Body() updateLeaveEntitlementDto: UpdateLeaveEntitlementDto
@@ -124,37 +125,43 @@ export class LeaveController {
 
   // Leave Adjustment Endpoints
   @Post('adjustment')
-  @UseGuards(RolesGuard)
-  @Roles('HR Admin')  // Only HR Admin can create leave adjustments
+  // @UseGuards(RolesGuard)
+  // @Roles('HR Admin')  // Only HR Admin can create leave adjustments
   async createLeaveAdjustment(@Body() createLeaveAdjustmentDto: CreateLeaveAdjustmentDto) {
     return await this.leavesService.createLeaveAdjustment(createLeaveAdjustmentDto);
   }
 
   @Get('adjustment/:employeeId')
-  @UseGuards(RolesGuard)
-  @Roles('HR Admin', 'Manager')  // HR Admin and Manager can view leave adjustments
+  // @UseGuards(RolesGuard)
+  // @Roles('HR Admin', 'Manager')  // HR Admin and Manager can view leave adjustments
   async getLeaveAdjustments(@Param('employeeId') employeeId: string) {
     return await this.leavesService.getLeaveAdjustments(employeeId);
   }
 
   @Delete('adjustment/:id')
-  @UseGuards(RolesGuard)
-  @Roles('HR Admin')  // Only HR Admin can delete leave adjustments
+  // @UseGuards(RolesGuard)
+  // @Roles('HR Admin')  // Only HR Admin can delete leave adjustments
   async deleteLeaveAdjustment(@Param('id') id: string) {
     return await this.leavesService.deleteLeaveAdjustment(id);
   }
 
   // Leave Type Endpoints
+  @Post('category')
+  // @UseGuards(RolesGuard)
+  // @Roles('HR Admin')  // Only HR Admin can create leave categories
+  async createLeaveCategory(@Body() createLeaveCategoryDto: CreateLeaveCategoryDto) {
+    return await this.leavesService.createLeaveCategory(createLeaveCategoryDto);
+  }
   @Post('type')
-  @UseGuards(RolesGuard)
-  @Roles('HR Admin')  // Only HR Admin can create leave types
+  // @UseGuards(RolesGuard)
+  // @Roles('HR Admin')  // Only HR Admin can create leave types
   async createLeaveType(@Body() createLeaveTypeDto: CreateLeaveTypeDto) {
     return await this.leavesService.createLeaveType(createLeaveTypeDto);
   }
 
   @Put('type/:id')
-  @UseGuards(RolesGuard)
-  @Roles('HR Admin')  // Only HR Admin can update leave types
+  // @UseGuards(RolesGuard)
+  // @Roles('HR Admin')  // Only HR Admin can update leave types
   async updateLeaveType(
     @Param('id') id: string,
     @Body() updateLeaveTypeDto: UpdateLeaveTypeDto
@@ -165,8 +172,8 @@ export class LeaveController {
   // Phase 2: Leave Request Approval Endpoints
 
   @Post('request/:id/approve')
-  @UseGuards(RolesGuard)
-  @Roles('Manager', 'Department Head')
+  // @UseGuards(RolesGuard)
+  // @Roles('Manager', 'Department Head')
   async approveLeaveRequest(
     @Param('id') id: string,
     @Body() approveLeaveRequestDto: ApproveLeaveRequestDto,
@@ -176,8 +183,8 @@ export class LeaveController {
   }
 
   @Post('request/:id/reject')
-  @UseGuards(RolesGuard)
-  @Roles('Manager', 'Department Head')
+  // @UseGuards(RolesGuard)
+  // @Roles('Manager', 'Department Head')
   async rejectLeaveRequest(
     @Param('id') id: string,
     @Body() rejectLeaveRequestDto: RejectLeaveRequestDto,
@@ -196,15 +203,15 @@ export class LeaveController {
   // Phase 2: HR Manager Endpoints
 
   @Post('request/finalize')
-  @UseGuards(RolesGuard)
-  @Roles('HR Manager')
+  // @UseGuards(RolesGuard)
+  // @Roles('HR Manager')
   async finalizeLeaveRequest(@Body() finalizeDto: FinalizeLeaveRequestDto) {
     return await this.leavesService.finalizeLeaveRequest(finalizeDto.leaveRequestId, finalizeDto.hrUserId);
   }
 
   @Post('request/override')
-  @UseGuards(RolesGuard)
-  @Roles('HR Manager')
+  // @UseGuards(RolesGuard)
+  // @Roles('HR Manager')
   async hrOverrideDecision(@Body() overrideDto: HrOverrideDecisionDto) {
     return await this.leavesService.hrOverrideDecision(
       overrideDto.leaveRequestId,
@@ -215,8 +222,8 @@ export class LeaveController {
   }
 
   @Post('request/process-multiple')
-  @UseGuards(RolesGuard)
-  @Roles('HR Manager')
+  //@UseGuards(RolesGuard)
+  //@Roles('HR Manager')
   async processMultipleLeaveRequests(@Body() processDto: ProcessMultipleRequestsDto) {
     return await this.leavesService.processMultipleLeaveRequests(
       processDto.leaveRequestIds,
@@ -228,8 +235,8 @@ export class LeaveController {
   // Phase 2: Employee Endpoints
 
   @Get('balance/:employeeId')
-  @UseGuards(RolesGuard)
-  @Roles('Employee', 'Manager', 'HR Manager')
+ // @UseGuards(RolesGuard)
+  //@Roles('Employee', 'Manager', 'HR Manager')
   async getEmployeeLeaveBalance(
     @Param('employeeId') employeeId: string,
     @Query('leaveTypeId') leaveTypeId?: string
@@ -238,8 +245,8 @@ export class LeaveController {
   }
 
   @Post('request/:id/cancel')
-  @UseGuards(RolesGuard)
-  @Roles('Employee')
+  //@UseGuards(RolesGuard)
+  //@Roles('Employee')
   async cancelLeaveRequest(@Param('id') id: string) {
     return await this.leavesService.cancelLeaveRequest(id);
   }
