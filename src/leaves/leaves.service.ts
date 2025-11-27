@@ -212,15 +212,15 @@ async getLeaveRequestById(id: string): Promise<LeaveRequestDocument> {
     }
 
 
-// async deleteLeaveRequest(id: string): Promise<LeaveRequestDocument> {
-//    const leaveRequest = await this.leavePolicyModel.findById(id).exec();
+async deleteLeaveRequest(id: string): Promise<LeaveRequestDocument> {
+   const leaveRequest = await this.leavePolicyModel.findById(id).exec();
 
-//   if (!leaveRequest) {
-//     throw new Error(`LeavePolicy with ID ${id} not found`);
-//   }
+  if (!leaveRequest) {
+    throw new Error(`LeavePolicy with ID ${id} not found`);
+  }
 
-//  return await this.leaveRequestModel.findByIdAndDelete(id).exec() as LeaveRequestDocument;
-// }
+ return await this.leaveRequestModel.findByIdAndDelete(id).exec() as LeaveRequestDocument;
+}
 
     // Cancel a leave request before final approval
     async cancelLeaveRequest(id: string): Promise<LeaveRequestDocument> {
