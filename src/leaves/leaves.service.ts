@@ -137,14 +137,22 @@ async isBlockedDate(date: string): Promise<boolean> {
   );
 }
 
-    // Create a new leave request
+    // Phase 2: REQ-015 - Create leave request with validation and routing
     async createLeaveRequest(createLeaveRequestDto: CreateLeaveRequestDto): Promise<LeaveRequestDocument> {
-        const { dates, employeeId, justification, attachmentId, approvalFlow } = createLeaveRequestDto;
+        const { dates, employeeId, leaveTypeId, justification, attachmentId, durationDays } = createLeaveRequestDto;
         const { from, to } = dates;
 
-        // Convert dates to ISO string format
-        const startDate = new Date(from).toISOString();
-        const endDate = new Date(to).toISOString();
+        const startDate = new Date(from);
+        const endDate = new Date(to);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        // REQ-031: Check post-leave grace period
+        const maxGracePeriodDays = 7; // Should come from configuration
+        const daysSinceEndDate = Math.floor((today.getTime() - endDate.getTime()) / (1000 * 60 * 60 * 24));
+        if (daysSinceEndDate > maxGracePeriodDays && daysSinceEndDate > 0) {
+            throw new Error(`Post-leave requests must be submitted within ${maxGracePeriodDays} days after the leave end date.`);
+        }
 
         // Fetch employee profile
         const employeeProfile = await this.employeeProfileModel.findById(employeeId).exec();
@@ -152,14 +160,24 @@ async isBlockedDate(date: string): Promise<boolean> {
             throw new Error('Employee not found');
         }
 
-        // Check if dates fall on blocked periods
-        const isFromBlocked = await this.isBlockedDate(startDate);
-        const isToBlocked = await this.isBlockedDate(endDate);
-        if (isFromBlocked || isToBlocked) {
-            throw new Error('The requested leave dates fall on blocked periods.');
+        // Fetch leave type
+        const leaveType = await this.leaveTypeModel.findById(leaveTypeId).exec();
+        if (!leaveType) {
+            throw new Error('Leave type not found');
         }
 
-        // Handle document attachment if needed
+        // REQ-016: Validate medical certificate requirement for sick leave exceeding one day
+        if (leaveType.code === 'SICK_LEAVE' && durationDays > 1) {
+            if (!attachmentId) {
+                throw new Error('Medical certificate is required for sick leave exceeding one day.');
+            }
+        }
+
+        // REQ-016: Validate attachment requirement
+        if (leaveType.requiresAttachment && !attachmentId) {
+            throw new Error(`Attachment is required for ${leaveType.name} leave requests.`);
+        }
+
         if (attachmentId) {
             const attachment = await this.attachmentModel.findById(attachmentId).exec();
             if (!attachment) {
@@ -167,22 +185,128 @@ async isBlockedDate(date: string): Promise<boolean> {
             }
         }
 
-        // Create leave request object
+        // Check if dates fall on blocked periods
+        const isFromBlocked = await this.isBlockedDate(startDate.toISOString());
+        const isToBlocked = await this.isBlockedDate(endDate.toISOString());
+        if (isFromBlocked || isToBlocked) {
+            throw new Error('The requested leave dates fall on blocked periods.');
+        }
+
+        // Validate balance and overlaps
+        const validationResult = await this.validateLeaveRequest(employeeId, leaveTypeId, startDate, endDate, durationDays);
+        if (!validationResult.isValid) {
+            throw new Error(validationResult.errorMessage);
+        }
+
+        // // REQ-020: Route to Line Manager/Department Head
+        // const lineManagerId = await this.getLineManagerId(employeeId);
+        // if (!lineManagerId) {
+        //     throw new Error('Line manager not found. Cannot route leave request for approval.');
+        // }
+
+        // Create leave request with initial approval flow
         const leaveRequest = new this.leaveRequestModel({
             ...createLeaveRequestDto,
-            status: LeaveStatus.PENDING, // Default status is PENDING
-            approvalFlow: approvalFlow || [], // Handle approval flow if provided
+            status: LeaveStatus.PENDING,
+            approvalFlow: [{
+                role: 'Manager',
+                status: 'PENDING',
+                //decidedBy: lineManagerId,
+                decidedAt: undefined,
+            }],
         });
 
-        // Save and notify
+        // Update pending balance
+        const entitlement = await this.getLeaveEntitlement(employeeId, leaveTypeId);
+        entitlement.pending += durationDays;
+        await this.updateLeaveEntitlement(entitlement._id.toString(), {
+            pending: entitlement.pending,
+        });
+
         const savedLeaveRequest = await leaveRequest.save();
-
-        // Notify employee and manager
-        //await this.notificationService.sendNotification(employeeId, 'Leave request submitted', 'Your leave request has been successfully submitted for approval.');
-
-        // Return saved leave request
         return savedLeaveRequest;
     }
+
+    // Phase 2: Helper - Validate leave request (balance, overlaps)
+    private async validateLeaveRequest(
+        employeeId: string,
+        leaveTypeId: string,
+        startDate: Date,
+        endDate: Date,
+        durationDays: number
+    ): Promise<{ isValid: boolean; errorMessage?: string }> {
+        const entitlement = await this.getLeaveEntitlement(employeeId, leaveTypeId);
+        const availableBalance = entitlement.remaining - entitlement.pending;
+        
+        if (availableBalance < durationDays) {
+            return {
+                isValid: false,
+                errorMessage: `Insufficient leave balance. Available: ${availableBalance} days, Requested: ${durationDays} days.`,
+            };
+        }
+
+        // Check for overlapping leave requests
+        const overlappingRequests = await this.leaveRequestModel.find({
+            employeeId: new Types.ObjectId(employeeId),
+            status: { $in: [LeaveStatus.PENDING, LeaveStatus.APPROVED] },
+            $or: [
+                {
+                    'dates.from': { $lte: endDate },
+                    'dates.to': { $gte: startDate },
+                },
+            ],
+        }).exec();
+
+        if (overlappingRequests.length > 0) {
+            return {
+                isValid: false,
+                errorMessage: 'Leave request overlaps with existing approved or pending leave requests.',
+            };
+        }
+
+        return { isValid: true };
+    }
+
+    // // Phase 2: REQ-020 - Get Line Manager/Department Head ID
+    // private async getLineManagerId(employeeId: string): Promise<Types.ObjectId | null> {
+    //     const employeeProfile = await this.employeeProfileModel.findById(employeeId).exec();
+    //     if (!employeeProfile || !employeeProfile.primaryPositionId) {
+    //         return null;
+    //     }
+
+    //     const PositionModel = this.employeeProfileModel.db.model('Position');
+    //     const position = await PositionModel.findById(employeeProfile.primaryPositionId).exec();
+
+    //     if (!position || !position.reportsToPositionId) {
+    //         if (employeeProfile.primaryDepartmentId) {
+    //             const DepartmentModel = this.employeeProfileModel.db.model('Department');
+    //             const department = await DepartmentModel.findById(employeeProfile.primaryDepartmentId).exec();
+    //             if (department && department.headPositionId) {
+    //                 const PositionAssignmentModel = this.employeeProfileModel.db.model('PositionAssignment');
+    //                 const assignment = await PositionAssignmentModel.findOne({
+    //                     positionId: department.headPositionId,
+    //                     endDate: null,
+    //                 }).exec();
+    //                 if (assignment) {
+    //                     return assignment.employeeProfileId;
+    //                 }
+    //             }
+    //         }
+    //         return null;
+    //     }
+
+    //     const PositionAssignmentModel = this.employeeProfileModel.db.model('PositionAssignment');
+    //     const assignment = await PositionAssignmentModel.findOne({
+    //         positionId: position.reportsToPositionId,
+    //         endDate: null,
+    //     }).exec();
+
+    //     if (assignment) {
+    //         return assignment.employeeProfileId;
+    //     }
+
+    //     return null;
+    // }
 
 
 
@@ -195,8 +319,31 @@ async getLeaveRequestById(id: string): Promise<LeaveRequestDocument> {
 }
 
 
-    // Modify an existing leave request (update)
+    // Phase 2: REQ-017 - Modify an existing leave request (only for pending requests)
     async updateLeaveRequest(id: string, updateLeaveRequestDto: UpdateLeaveRequestDto): Promise<LeaveRequestDocument> {
+        const leaveRequest = await this.leaveRequestModel.findById(id).exec();
+
+        if (!leaveRequest) {
+            throw new Error(`LeaveRequest with ID ${id} not found`);
+        }
+
+        if (leaveRequest.status !== LeaveStatus.PENDING) {
+            throw new Error('Only pending requests can be modified');
+        }
+
+        // If duration changed, update pending balance
+        if (updateLeaveRequestDto.durationDays && updateLeaveRequestDto.durationDays !== leaveRequest.durationDays) {
+            const entitlement = await this.getLeaveEntitlement(
+                leaveRequest.employeeId.toString(),
+                leaveRequest.leaveTypeId.toString()
+            );
+            const oldPending = entitlement.pending;
+            entitlement.pending = oldPending - leaveRequest.durationDays + updateLeaveRequestDto.durationDays;
+            await this.updateLeaveEntitlement(entitlement._id.toString(), {
+                pending: entitlement.pending,
+            });
+        }
+
         const updatedLeaveRequest = await this.leaveRequestModel
             .findByIdAndUpdate(id, updateLeaveRequestDto, { new: true })
             .exec();
@@ -205,8 +352,8 @@ async getLeaveRequestById(id: string): Promise<LeaveRequestDocument> {
             throw new Error(`LeaveRequest with ID ${id} not found`);
         }
 
-        // Notify employee about the update
-        //await this.notificationService.sendNotification(updatedLeaveRequest.employeeId, 'Leave request updated', `Your leave request with ID ${id} has been updated.`);
+        // // REQ-030: Notify employee about the update
+        // await this.notifyStakeholders(updatedLeaveRequest, 'modified');
 
         return updatedLeaveRequest;
     }
@@ -222,7 +369,7 @@ async deleteLeaveRequest(id: string): Promise<LeaveRequestDocument> {
  return await this.leaveRequestModel.findByIdAndDelete(id).exec() as LeaveRequestDocument;
 }
 
-    // Cancel a leave request before final approval
+    // Phase 2: REQ-018 - Cancel a leave request before final approval
     async cancelLeaveRequest(id: string): Promise<LeaveRequestDocument> {
         const leaveRequest = await this.leaveRequestModel.findById(id).exec();
 
@@ -234,55 +381,70 @@ async deleteLeaveRequest(id: string): Promise<LeaveRequestDocument> {
             throw new Error('Only pending requests can be canceled');
         }
 
+        // Release pending balance
+        const entitlement = await this.getLeaveEntitlement(
+            leaveRequest.employeeId.toString(),
+            leaveRequest.leaveTypeId.toString()
+        );
+        entitlement.pending = Math.max(0, entitlement.pending - leaveRequest.durationDays);
+        await this.updateLeaveEntitlement(entitlement._id.toString(), {
+            pending: entitlement.pending,
+        });
+
         // Update status to canceled
         leaveRequest.status = LeaveStatus.CANCELLED;
         const canceledLeaveRequest = await leaveRequest.save();
 
-        // Notify employee and manager
-        //await this.notificationService.sendNotification(canceledLeaveRequest.employeeId, 'Leave request canceled', `Your leave request with ID ${id} has been canceled.`);
+        // REQ-030: Notify employee and manager
+        await this.notifyStakeholders(canceledLeaveRequest, 'canceled');
 
         return canceledLeaveRequest;
     }
 
-// Service method to approve leave
-async approveLeaveRequest(approveLeaveRequestDto: ApproveLeaveRequestDto, user: any): Promise<LeaveRequestDocument> {
-    const { leaveRequestId, status } = approveLeaveRequestDto;
+    // Phase 2: REQ-021 - Manager approve leave request
+    async approveLeaveRequest(approveLeaveRequestDto: ApproveLeaveRequestDto, user: any): Promise<LeaveRequestDocument> {
+        const { leaveRequestId, status } = approveLeaveRequestDto;
 
-    // Fetch the leave request to approve
-    const leaveRequest = await this.leaveRequestModel.findById(leaveRequestId).exec();
-    if (!leaveRequest) {
-        throw new Error(`LeaveRequest with ID ${leaveRequestId} not found`);
+        const leaveRequest = await this.leaveRequestModel.findById(leaveRequestId).exec();
+        if (!leaveRequest) {
+            throw new Error(`LeaveRequest with ID ${leaveRequestId} not found`);
+        }
+
+        if (leaveRequest.status !== LeaveStatus.PENDING) {
+            throw new Error('Leave request can only be approved if it is in pending status.');
+        }
+
+        const isManager = user.role === 'Manager' || user.role === 'Department Head';
+        if (!isManager) {
+            throw new Error('Only managers can approve leave requests at this stage.');
+        }
+
+        // Record manager approval
+        leaveRequest.approvalFlow.push({
+            role: user.role,
+            status: LeaveStatus.APPROVED,
+            decidedBy: new Types.ObjectId(user._id || user.id),
+            decidedAt: new Date(),
+        });
+
+        // Route to HR for finalization (REQ-025)
+        leaveRequest.status = LeaveStatus.PENDING; // Keep pending until HR finalizes
+        leaveRequest.approvalFlow.push({
+            role: 'HR Manager',
+            status: 'PENDING',
+            decidedBy: undefined,
+            decidedAt: undefined,
+        });
+
+        const savedRequest = await leaveRequest.save();
+
+        // REQ-030: Notify stakeholders
+        await this.notifyStakeholders(savedRequest, 'manager_approved');
+
+        return savedRequest;
     }
 
-    // Check if the status is pending
-    if (leaveRequest.status !== LeaveStatus.PENDING) {
-        throw new Error('Leave request can only be approved if it is in pending status.');
-    }
-
-    // Record the approval decision in approvalFlow
-    leaveRequest.approvalFlow.push({
-        role: user.role,  // The role of the approver (e.g., "Manager")
-        status,           // APPROVED or REJECTED
-        decidedBy: user._id, // The ID of the approver (e.g., the manager)
-        decidedAt: new Date(),
-    });
-
-    // Update the leave request status if the leave is approved
-    if (status === LeaveStatus.APPROVED) {
-        leaveRequest.status = LeaveStatus.APPROVED;
-    }
-
-    // Save the updated leave request
-    const updatedLeaveRequest = await leaveRequest.save();
-
-    // Send notifications to relevant users (employee, manager, HR)
-   // await this.notificationService.sendNotification(leaveRequest.employeeId, 'Leave request approved', `Your leave request with ID ${leaveRequestId} has been approved.`);
-  // await this.notificationService.sendNotification('HR_USER_ID', 'Leave request awaiting finalization', `Leave request with ID ${leaveRequestId} is awaiting HR finalization.`);
-
-    return updatedLeaveRequest;
-}
-
-// Service method to reject leave (without justification)
+// Phase 2: REQ-022 - Manager reject leave request
 async rejectLeaveRequest(rejectLeaveRequestDto: RejectLeaveRequestDto, user: any): Promise<LeaveRequestDocument> {
     const { leaveRequestId, status } = rejectLeaveRequestDto;
 
@@ -291,29 +453,40 @@ async rejectLeaveRequest(rejectLeaveRequestDto: RejectLeaveRequestDto, user: any
         throw new Error(`LeaveRequest with ID ${leaveRequestId} not found`);
     }
 
-    // Check if the status is pending
     if (leaveRequest.status !== LeaveStatus.PENDING) {
         throw new Error('Leave request can only be rejected if it is in pending status.');
     }
 
-    // Record the rejection in the approvalFlow
+    const isManager = user.role === 'Manager' || user.role === 'Department Head';
+    if (!isManager) {
+        throw new Error('Only managers can reject leave requests at this stage.');
+    }
+
     leaveRequest.approvalFlow.push({
-        role: user.role,  // The role of the approver (e.g., "Manager")
-        status,           // REJECTED
-        decidedBy: user._id, // The ID of the approver (e.g., the manager)
+        role: user.role,
+        status: LeaveStatus.REJECTED,
+        decidedBy: new Types.ObjectId(user._id || user.id),
         decidedAt: new Date(),
     });
 
-    // Update the leave request status if the leave is rejected
     leaveRequest.status = LeaveStatus.REJECTED;
 
-    // Save the updated leave request
-    const rejectedLeaveRequest = await leaveRequest.save();
+    // Release pending balance
+    const entitlement = await this.getLeaveEntitlement(
+        leaveRequest.employeeId.toString(),
+        leaveRequest.leaveTypeId.toString()
+    );
+    entitlement.pending = Math.max(0, entitlement.pending - leaveRequest.durationDays);
+    await this.updateLeaveEntitlement(entitlement._id.toString(), {
+        pending: entitlement.pending,
+    });
 
-    // Send notification to employee about rejection
-    //await this.notificationService.sendNotification(leaveRequest.employeeId, 'Leave request rejected', `Your leave request with ID ${leaveRequestId} has been rejected.`);
+    const savedRequest = await leaveRequest.save();
 
-    return rejectedLeaveRequest;
+    // REQ-030: Notify stakeholders
+    await this.notifyStakeholders(savedRequest, 'rejected');
+
+    return savedRequest;
 }
 
                    
@@ -330,13 +503,6 @@ async getLeaveAdjustments(employeeId: string): Promise<LeaveAdjustmentDocument[]
   return await this.leaveAdjustmentModel.find({ employeeId }).exec(); 
 }
 
-async getLeaveAdjustmentById(id: string): Promise<LeaveAdjustmentDocument> {
-  const leaveAdjustment= await this.leaveAdjustmentModel.findById(id).exec();
-  if(!leaveAdjustment){
-    throw new Error(`leaveAdjustment with ID ${id} not found`);
-  }
-  return leaveAdjustment;
-}
 
 
 async deleteLeaveAdjustment(id: string): Promise<LeaveAdjustmentDocument> {
@@ -498,6 +664,311 @@ async updateLeaveType(
 
   return updatedLeaveType;
 }
+
+    // // Phase 2: REQ-020 - Get pending requests for manager review
+    // async getPendingRequestsForManager(managerId: string): Promise<LeaveRequestDocument[]> {
+    //     const managerProfile = await this.employeeProfileModel.findById(managerId).exec();
+    //     if (!managerProfile || !managerProfile.primaryPositionId) {
+    //         return [];
+    //     }
+
+    //     const PositionModel = this.employeeProfileModel.db.model('Position');
+    //     const managerPosition = await PositionModel.findById(managerProfile.primaryPositionId).exec();
+    //     if (!managerPosition) {
+    //         return [];
+    //     }
+
+    //     const reportingPositions = await PositionModel.find({
+    //         reportsToPositionId: managerPosition._id,
+    //     }).select('_id').exec();
+
+    //     const positionIds = reportingPositions.map(p => p._id);
+    //     const PositionAssignmentModel = this.employeeProfileModel.db.model('PositionAssignment');
+    //     const assignments = await PositionAssignmentModel.find({
+    //         positionId: { $in: positionIds },
+    //         endDate: null,
+    //     }).select('employeeProfileId').exec();
+
+    //     const employeeIds = assignments.map(a => a.employeeProfileId);
+
+    //     // REQ-023: Include delegated requests
+    //     const delegatedManagerIds = await this.getDelegatedManagers(managerId);
+    //     const allManagerIds = [new Types.ObjectId(managerId), ...delegatedManagerIds];
+
+    //     return await this.leaveRequestModel.find({
+    //         employeeId: { $in: employeeIds },
+    //         status: LeaveStatus.PENDING,
+    //         $or: [
+    //             { 'approvalFlow.0.decidedBy': { $in: allManagerIds } },
+    //             { 'approvalFlow.0.status': 'PENDING' }
+    //         ],
+    //     }).exec();
+    // }
+
+    // // Phase 2: REQ-023 - Get delegated managers for a manager
+    // private async getDelegatedManagers(managerId: string): Promise<Types.ObjectId[]> {
+    //     // This would typically query a delegation table
+    //     // For now, return empty array - can be enhanced with actual delegation logic
+    //     // Example: return await delegationModel.find({ delegatorId: managerId, isActive: true }).select('delegateId').exec();
+    //     return [];
+    // }
+
+    // // Phase 2: REQ-023 - Delegate approval authority to another manager
+    // async delegateApprovalAuthority(managerId: string, delegateId: string, startDate: Date, endDate: Date): Promise<void> {
+    //     // This would create a delegation record
+    //     // await this.delegationModel.create({
+    //     //     delegatorId: managerId,
+    //     //     delegateId: delegateId,
+    //     //     startDate: startDate,
+    //     //     endDate: endDate,
+    //     //     isActive: true,
+    //     // });
+        
+    //     // For now, this is a placeholder - actual implementation would require a Delegation schema
+    //     console.log(`Delegating approval authority from ${managerId} to ${delegateId} from ${startDate} to ${endDate}`);
+    // }
+
+    // Phase 2: REQ-025, REQ-029 - HR Manager finalize approved leave request
+    async finalizeLeaveRequest(leaveRequestId: string, hrUserId: string): Promise<LeaveRequestDocument> {
+        const leaveRequest = await this.leaveRequestModel.findById(leaveRequestId).exec();
+        if (!leaveRequest) {
+            throw new Error(`LeaveRequest with ID ${leaveRequestId} not found`);
+        }
+
+        const lastApproval = leaveRequest.approvalFlow[leaveRequest.approvalFlow.length - 1];
+        if (lastApproval.role !== 'HR Manager' || lastApproval.status !== 'PENDING') {
+            throw new Error('Leave request is not pending HR finalization.');
+        }
+
+        // REQ-028: Verify medical documents if required
+        if (leaveRequest.attachmentId) {
+            const attachment = await this.attachmentModel.findById(leaveRequest.attachmentId).exec();
+            if (!attachment) {
+                throw new Error('Referenced attachment not found.');
+            }
+            // BR 54: Additional document validation (file type, size, etc.)
+            await this.validateDocument(leaveRequest.leaveTypeId.toString(), attachment);
+        }
+
+        // BR 41: Check cumulative limits (e.g., max sick leave per year)
+        await this.checkCumulativeLimits(leaveRequest.employeeId.toString(), leaveRequest.leaveTypeId.toString(), leaveRequest.durationDays);
+
+        // Update approval flow
+        const hrIndex = leaveRequest.approvalFlow.length - 1;
+        leaveRequest.approvalFlow[hrIndex] = {
+            role: 'HR Manager',
+            status: LeaveStatus.APPROVED,
+            decidedBy: new Types.ObjectId(hrUserId),
+            decidedAt: new Date(),
+        };
+
+        leaveRequest.status = LeaveStatus.APPROVED;
+
+        // REQ-029, BR 32: Auto-update leave balances with proper calculation
+        await this.finalizeApprovedLeaveRequest(leaveRequest);
+
+        // REQ-030: Notify stakeholders
+        //await this.notifyStakeholders(leaveRequest, 'finalized');
+
+        // REQ-042, BR 692: Sync with payroll system
+        //await this.syncWithPayroll(leaveRequest);
+
+        return await leaveRequest.save();
+    }
+
+    // Phase 2: BR 54 - Validate document (file type, size, format)
+    private async validateDocument(leaveTypeId: string, attachment: AttachmentDocument): Promise<void> {
+        const leaveType = await this.leaveTypeModel.findById(leaveTypeId).exec();
+        if (!leaveType) {
+            return;
+        }
+
+        // Validate file type if specified
+        if (leaveType.attachmentType) {
+            // Additional validation can be added here based on attachmentType
+            // For example, medical documents should be PDF or image files
+        }
+
+        // Validate file size (e.g., max 10MB)
+        const maxFileSize = 10 * 1024 * 1024; // 10MB
+        if (attachment.size && attachment.size > maxFileSize) {
+            throw new Error('Attachment file size exceeds maximum allowed size (10MB).');
+        }
+    }
+
+    // Phase 2: BR 41 - Check cumulative limits (e.g., max sick leave per year)
+    private async checkCumulativeLimits(employeeId: string, leaveTypeId: string, requestedDays: number): Promise<void> {
+        const leaveType = await this.leaveTypeModel.findById(leaveTypeId).exec();
+        if (!leaveType) {
+            return;
+        }
+
+        // Check max sick leave per year
+        if (leaveType.code === 'SICK_LEAVE') {
+            const currentYear = new Date().getFullYear();
+            const yearStart = new Date(currentYear, 0, 1);
+            const yearEnd = new Date(currentYear, 11, 31);
+
+            const approvedSickLeaves = await this.leaveRequestModel.find({
+                employeeId: new Types.ObjectId(employeeId),
+                leaveTypeId: new Types.ObjectId(leaveTypeId),
+                status: LeaveStatus.APPROVED,
+                'dates.from': { $gte: yearStart, $lte: yearEnd },
+            }).exec();
+
+            const totalSickLeaveDays = approvedSickLeaves.reduce((sum, req) => sum + req.durationDays, 0);
+            const maxSickLeavePerYear = 30; // Should come from policy configuration
+
+            if (totalSickLeaveDays + requestedDays > maxSickLeavePerYear) {
+                throw new Error(`Cumulative sick leave limit exceeded. Maximum ${maxSickLeavePerYear} days per year allowed.`);
+            }
+        }
+    }
+
+    // Phase 2: REQ-029, BR 32 - Finalize approved leave request (update balances with proper calculation)
+    private async finalizeApprovedLeaveRequest(leaveRequest: LeaveRequestDocument): Promise<void> {
+        const entitlement = await this.getLeaveEntitlement(
+            leaveRequest.employeeId.toString(),
+            leaveRequest.leaveTypeId.toString()
+        );
+
+        // BR 32: Proper balance calculation - move from pending to taken
+        entitlement.pending = Math.max(0, entitlement.pending - leaveRequest.durationDays);
+        entitlement.taken += leaveRequest.durationDays;
+        
+        // BR 32: Recalculate remaining balance (yearlyEntitlement - taken)
+        entitlement.remaining = entitlement.yearlyEntitlement - entitlement.taken;
+
+        await this.updateLeaveEntitlement(entitlement._id.toString(), {
+            pending: entitlement.pending,
+            taken: entitlement.taken,
+            remaining: entitlement.remaining,
+        });
+    }
+
+    // Phase 2: REQ-030, N-053 - Notify stakeholders
+    private async notifyStakeholders(leaveRequest: LeaveRequestDocument, event: string): Promise<void> {
+        // This would integrate with NotificationService
+        // await this.notificationService.sendNotification(
+        //     leaveRequest.employeeId.toString(),
+        //     `Leave request ${event}`,
+        //     `Your leave request has been ${event}.`
+        // );
+        
+        // Notify manager
+        const managerId = leaveRequest.approvalFlow[0]?.decidedBy;
+        if (managerId) {
+            // await this.notificationService.sendNotification(
+            //     managerId.toString(),
+            //     `Leave request ${event}`,
+            //     `Leave request from employee has been ${event}.`
+            // );
+        }
+
+        // Notify HR and attendance coordinator
+        // await this.notificationService.sendNotification(
+        //     'HR_TEAM_ID',
+        //     `Leave request ${event}`,
+        //     `Leave request ${leaveRequest._id} has been ${event}.`
+        // );
+    }
+
+    // Phase 2: REQ-042, BR 692 - Sync with payroll system
+    private async syncWithPayroll(leaveRequest: LeaveRequestDocument): Promise<void> {
+        // This would integrate with PayrollService
+        // BR 692: Sync leave balance changes with payroll
+        // await this.payrollService.updateLeaveBalance(
+        //     leaveRequest.employeeId.toString(),
+        //     leaveRequest.leaveTypeId.toString(),
+        //     leaveRequest.durationDays,
+        //     leaveRequest.dates.from,
+        //     leaveRequest.dates.to
+        // );
+    }
+
+    // Phase 2: REQ-026, BR 479 - HR Manager override manager decision
+    async hrOverrideDecision(leaveRequestId: string, hrUserId: string, overrideToApproved: boolean, overrideReason?: string): Promise<LeaveRequestDocument> {
+        const leaveRequest = await this.leaveRequestModel.findById(leaveRequestId).exec();
+        if (!leaveRequest) {
+            throw new Error(`LeaveRequest with ID ${leaveRequestId} not found`);
+        }
+
+        // BR 479: Validate override conditions (e.g., only for special circumstances)
+        if (!overrideReason || overrideReason.trim().length === 0) {
+            throw new Error('Override reason is required for HR override decisions.');
+        }
+
+        leaveRequest.approvalFlow.push({
+            role: 'HR Manager',
+            status: overrideToApproved ? LeaveStatus.APPROVED : LeaveStatus.REJECTED,
+            decidedBy: new Types.ObjectId(hrUserId),
+            decidedAt: new Date(),
+        });
+
+        if (overrideToApproved) {
+            leaveRequest.status = LeaveStatus.APPROVED;
+            await this.finalizeApprovedLeaveRequest(leaveRequest);
+            await this.notifyStakeholders(leaveRequest, 'overridden_approved');
+            await this.syncWithPayroll(leaveRequest);
+        } else {
+            leaveRequest.status = LeaveStatus.REJECTED;
+            const entitlement = await this.getLeaveEntitlement(
+                leaveRequest.employeeId.toString(),
+                leaveRequest.leaveTypeId.toString()
+            );
+            entitlement.pending = Math.max(0, entitlement.pending - leaveRequest.durationDays);
+            await this.updateLeaveEntitlement(entitlement._id.toString(), {
+                pending: entitlement.pending,
+            });
+            await this.notifyStakeholders(leaveRequest, 'overridden_rejected');
+        }
+
+        return await leaveRequest.save();
+    }
+
+    // Phase 2: REQ-027 - Process multiple leave requests at once
+    async processMultipleLeaveRequests(leaveRequestIds: string[], hrUserId: string, approved: boolean): Promise<LeaveRequestDocument[]> {
+        const results: LeaveRequestDocument[] = [];
+
+        for (const leaveRequestId of leaveRequestIds) {
+            try {
+                if (approved) {
+                    const finalized = await this.finalizeLeaveRequest(leaveRequestId, hrUserId);
+                    results.push(finalized);
+                } else {
+                    const rejected = await this.hrOverrideDecision(leaveRequestId, hrUserId, false, 'Bulk rejection');
+                    results.push(rejected);
+                }
+            } catch (error) {
+                console.error(`Error processing leave request ${leaveRequestId}:`, error);
+            }
+        }
+
+        return results;
+    }
+
+    // Phase 2: Get employee leave balance
+    async getEmployeeLeaveBalance(employeeId: string, leaveTypeId?: string): Promise<any> {
+        if (leaveTypeId) {
+            const entitlement = await this.getLeaveEntitlement(employeeId, leaveTypeId);
+            return {
+                leaveTypeId,
+                yearlyEntitlement: entitlement.yearlyEntitlement,
+                taken: entitlement.taken,
+                pending: entitlement.pending,
+                remaining: entitlement.remaining,
+            };
+        } else {
+            const entitlements = await this.leaveEntitlementModel.find({ employeeId }).exec();
+            return entitlements.map(ent => ({
+                leaveTypeId: ent.leaveTypeId,
+                yearlyEntitlement: ent.yearlyEntitlement,
+                taken: ent.taken,
+                pending: ent.pending,
+                remaining: ent.remaining,
+            }));
+        }
+    }
 
 
 
