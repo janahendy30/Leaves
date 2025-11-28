@@ -23,7 +23,14 @@ import { ConfigModule } from '@nestjs/config';
      ConfigModule.forRoot({
       isGlobal: true,   // makes env available everywhere
     }),
-     MongooseModule.forRoot(process.env.MONGODB_URI || 'mongodb+srv://TeamUser:TeamUser@cluster0.mfclf62.mongodb.net/'),
+     MongooseModule.forRoot(
+      process.env.MONGODB_URI || 
+      'mongodb+srv://TeamUser:TeamUser@cluster0.mfclf62.mongodb.net/',
+     {
+        dbName: 'hr_system', // Explicitly set database name
+     
+ },
+),
 
     TimeManagementModule, RecruitmentModule, LeavesModule, PayrollExecutionModule, PayrollConfigurationModule, PayrollTrackingModule, EmployeeProfileModule, OrganizationStructureModule, PerformanceModule],
   controllers: [AppController],
