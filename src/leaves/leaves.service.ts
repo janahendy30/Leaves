@@ -137,8 +137,12 @@ async createLeaveCategory(createLeaveCategoryDto: CreateLeaveCategoryDto): Promi
 async isBlockedDate(date: string): Promise<boolean> {
   const calendar = await this.calendarModel.findOne({ year: new Date().getFullYear() }).exec();
   if (!calendar) {
-    throw new Error('Calendar for the year not found');
+    // No calendar found for the year — treat as no blocked dates instead of throwing.
+    // This avoids a 500 error when the calendar collection isn't seeded.
+    console.warn('Calendar for the year not found; treating date as not blocked:', date);
+    return false;
   }
+
   return calendar.blockedPeriods.some(
     (period) => new Date(period.from) <= new Date(date) && new Date(period.to) >= new Date(date)
   );
