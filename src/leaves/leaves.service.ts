@@ -26,6 +26,7 @@ import { UpdateLeaveRequestDto } from './dto/UpdateLeaveRequest.dto';
 import { CreateLeaveEntitlementDto } from './dto/CreateLeaveEntitlement.dto';  
 import { UpdateLeaveEntitlementDto } from './dto/UpdateLeaveEntitlement.dto'; 
 import { CreateLeaveTypeDto } from './dto/CreateLeaveType.dto';
+import { CreateLeaveCategoryDto } from './dto/CreateLeaveCategory.dto';
 import { UpdateLeaveTypeDto } from './dto/UpdateLeaveType.dto'; 
 import { LeaveStatus } from './enums/leave-status.enum';
 //import { NotificationService } from '../notification/notification.service'; // Assuming a notification service
@@ -122,6 +123,12 @@ async deleteLeavePolicy(id: string): Promise<LeavePolicyDocument> {
  
   return await this.leavePolicyModel.findByIdAndDelete(id).exec() as LeavePolicyDocument;
 
+}
+
+// Leave Category
+async createLeaveCategory(createLeaveCategoryDto: CreateLeaveCategoryDto): Promise<LeaveCategoryDocument> {
+  const newCategory = new this.leaveCategoryModel(createLeaveCategoryDto);
+  return await newCategory.save();
 }
                                   // LeaveRequest
 
