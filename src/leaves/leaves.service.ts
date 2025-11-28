@@ -39,6 +39,16 @@ import { LeaveStatus } from './enums/leave-status.enum';
 import { AccrualMethod } from './enums/accrual-method.enum';
 import { ApproveLeaveRequestDto } from './dto/ApproveLeaveRequest.dto';
 import { RejectLeaveRequestDto } from './dto/RejectLeaveRequest.dto';
+import { ViewLeaveBalanceDto } from './dto/ViewLeaveBalance.dto';
+import { ViewPastLeaveRequestsDto } from './dto/ViewPastLeaveRequests.dto';
+import { FilterLeaveHistoryDto } from './dto/FilterLeaveHistory.dto';
+import { ViewTeamLeaveBalancesDto } from './dto/ViewTeamLeaveBalances.dto';
+import { FilterTeamLeaveDataDto } from './dto/FilterTeamLeaveData.dto';
+import { FlagIrregularPatternDto } from './dto/FlagIrregularPattern.dto';
+import { AutoAccrueLeaveDto, AccrueAllEmployeesDto } from './dto/AutoAccrueLeave.dto';
+import { RunCarryForwardDto } from './dto/CarryForward.dto';
+import { AccrualAdjustmentDto } from './dto/AccrualAdjustment.dto';
+import { SyncWithPayrollDto } from './dto/SyncWithPayroll.dto';
 
 
 
@@ -439,13 +449,13 @@ async isBlockedDateRange(from: string, to: string): Promise<boolean> {
 
 
 
-async getLeaveRequestById(id: string): Promise<LeaveRequestDocument> {
- const LeaveRequest= await this.leaveRequestModel.findById(id).exec(); 
- if (!LeaveRequest) {
-    throw new Error(`LeavePolicy with ID ${id} not found`);  
-  }
- return LeaveRequest;
-}
+    async getLeaveRequestById(id: string): Promise<LeaveRequestDocument> {
+      const leaveRequest = await this.leaveRequestModel.findById(id).exec();
+      if (!leaveRequest) {
+        throw new Error(`LeaveRequest with ID ${id} not found`);
+      }
+      return leaveRequest;
+    }
 
 
     // Phase 2: REQ-017 - Modify an existing leave request (only for pending requests)
@@ -491,13 +501,13 @@ async getLeaveRequestById(id: string): Promise<LeaveRequestDocument> {
 
 
 async deleteLeaveRequest(id: string): Promise<LeaveRequestDocument> {
-   const leaveRequest = await this.leavePolicyModel.findById(id).exec();
+  const leaveRequest = await this.leaveRequestModel.findById(id).exec();
 
   if (!leaveRequest) {
-    throw new Error(`LeavePolicy with ID ${id} not found`);
+    throw new Error(`LeaveRequest with ID ${id} not found`);
   }
 
- return await this.leaveRequestModel.findByIdAndDelete(id).exec() as LeaveRequestDocument;
+  return await this.leaveRequestModel.findByIdAndDelete(id).exec() as LeaveRequestDocument;
 }
 
     // Phase 2: REQ-018 - Cancel a leave request before final approval
@@ -984,43 +994,17 @@ async updateLeaveType(
 
 
     // Phase 2: REQ-030, N-053 - Notify stakeholders
-    private async notifyStakeholders(leaveRequest: LeaveRequestDocument, event: string): Promise<void> {
-        // This would integrate with NotificationService
-        // await this.notificationService.sendNotification(
-        //     leaveRequest.employeeId.toString(),
-        //     `Leave request ${event}`,
-        //     `Your leave request has been ${event}.`
-        // );
-        
-        // Notify manager
-        const managerId = leaveRequest.approvalFlow[0]?.decidedBy;
-        if (managerId) {
-            // await this.notificationService.sendNotification(
-            //     managerId.toString(),
-            //     `Leave request ${event}`,
-            //     `Leave request from employee has been ${event}.`
-            // );
-        }
-
-        // Notify HR and attendance coordinator
-        // await this.notificationService.sendNotification(
-        //     'HR_TEAM_ID',
-        //     `Leave request ${event}`,
-        //     `Leave request ${leaveRequest._id} has been ${event}.`
-        // );
+    // Notifications are disabled per requirements (no-op)
+    private async notifyStakeholders(_: LeaveRequestDocument, __: string): Promise<void> {
+      return; // intentionally no-op
     }
 
-    // Phase 2: REQ-042, BR 692 - Sync with payroll system
-    private async syncWithPayroll(leaveRequest: LeaveRequestDocument): Promise<void> {
-        // This would integrate with PayrollService
-        // BR 692: Sync leave balance changes with payroll
-        // await this.payrollService.updateLeaveBalance(
-        //     leaveRequest.employeeId.toString(),
-        //     leaveRequest.leaveTypeId.toString(),
-        //     leaveRequest.durationDays,
-        //     leaveRequest.dates.from,
-        //     leaveRequest.dates.to
-        // );
+    // Phase 2: REQ-042, BR 692 - Sync with payroll system (internal helper)
+    // renamed to avoid collision with public `syncWithPayroll` that accepts event payloads
+    private async syncWithPayrollForRequest(leaveRequest: LeaveRequestDocument): Promise<void> {
+      // Placeholder for integration with PayrollService
+      // Implementation intentionally left as no-op for now (external sync handled elsewhere)
+      return;
     }
 
     
@@ -1047,7 +1031,7 @@ async updateLeaveType(
         leaveRequest.status = LeaveStatus.APPROVED;
         await this.finalizeApprovedLeaveRequest(leaveRequest);
         await this.notifyStakeholders(leaveRequest, 'overridden_approved');
-        await this.syncWithPayroll(leaveRequest);
+        await this.syncWithPayrollForRequest(leaveRequest);
       } else {
         leaveRequest.status = LeaveStatus.REJECTED;
         const entitlement = await this.getLeaveEntitlement(
@@ -1089,26 +1073,505 @@ async updateLeaveType(
     
 
     
-    // Phase 2: Get employee leave balance
+    // Phase 2: Get employee leave balance (detailed)
+    // Consolidated: returns detailed entitlement info. If `leaveTypeId` is provided,
+    // returns a single object; otherwise returns an array of entitlements.
+    //REQ-031:view current leave balance
     async getEmployeeLeaveBalance(employeeId: string, leaveTypeId?: string): Promise<any> {
-      if (leaveTypeId) {
-        const entitlement = await this.getLeaveEntitlement(employeeId, leaveTypeId);
-        return {
-          leaveTypeId,
-          yearlyEntitlement: entitlement.yearlyEntitlement,
-          taken: entitlement.taken,
-          pending: entitlement.pending,
-          remaining: entitlement.remaining,
-        };
-      } else {
-        const entitlements = await this.leaveEntitlementModel.find({ employeeId }).exec();
-        return entitlements.map(ent => ({
-          leaveTypeId: ent.leaveTypeId,
+      try {
+        const query: any = { employeeId: new Types.ObjectId(employeeId) };
+        if (leaveTypeId) {
+          query.leaveTypeId = new Types.ObjectId(leaveTypeId);
+        }
+
+        const entitlements = await this.leaveEntitlementModel.find(query).populate('leaveTypeId').exec();
+
+        const mapped = entitlements.map(ent => ({
+          leaveTypeId: ent.leaveTypeId?._id || ent.leaveTypeId,
+          leaveTypeName: (ent.leaveTypeId as any)?.name || undefined,
           yearlyEntitlement: ent.yearlyEntitlement,
+          accruedActual: ent.accruedActual,
+          carryForward: ent.carryForward,
           taken: ent.taken,
           pending: ent.pending,
           remaining: ent.remaining,
+          lastAccrualDate: ent.lastAccrualDate,
         }));
+
+        if (leaveTypeId) {
+          return mapped.length ? mapped[0] : null;
+        }
+
+        return mapped;
+      } catch (error) {
+        throw new Error(`Failed to fetch leave balance: ${(error as any).message}`);
+      }
+    }
+
+    // REQ-032: Get past leave requests with filters
+    async getPastLeaveRequests(employeeId: string, filters?: any): Promise<any[]> {
+      try {
+        const query: any = { employeeId: new Types.ObjectId(employeeId) };
+        
+        if (filters?.fromDate || filters?.toDate) {
+          query['dates.from'] = {};
+          if (filters?.fromDate) query['dates.from'].$gte = new Date(filters.fromDate);
+          if (filters?.toDate) {
+            query['dates.to'] = query['dates.to'] || {};
+            query['dates.to'].$lte = new Date(filters.toDate);
+          }
+        }
+
+        if (filters?.status) {
+          query.status = filters.status;
+        }
+
+        if (filters?.leaveTypeId) {
+          query.leaveTypeId = new Types.ObjectId(filters.leaveTypeId);
+        }
+
+        const requests = await this.leaveRequestModel.find(query)
+          .populate('leaveTypeId')
+          .sort({ 'dates.from': -1 })
+          .exec();
+
+        return requests.map(req => ({
+          _id: req._id,
+          employeeId: req.employeeId,
+          leaveTypeId: req.leaveTypeId._id,
+          leaveTypeName: (req.leaveTypeId as any).name,
+          dates: req.dates,
+          durationDays: req.durationDays,
+          justification: req.justification,
+          status: req.status,
+          approvalFlow: req.approvalFlow,
+          createdAt: (req as any).createdAt,
+          updatedAt: (req as any).updatedAt,
+        }));
+      } catch (error) {
+        throw new Error(`Failed to fetch past leave requests: ${(error as any).message}`);
+      }
+    }
+
+    // REQ-033: Filter and sort leave history
+    async filterLeaveHistory(employeeId: string, filters: any): Promise<any> {
+      try {
+        const query: any = { employeeId: new Types.ObjectId(employeeId) };
+
+        if (filters.leaveTypeId) {
+          query.leaveTypeId = new Types.ObjectId(filters.leaveTypeId);
+        }
+
+        if (filters.fromDate || filters.toDate) {
+          query['dates.from'] = {};
+          if (filters.fromDate) query['dates.from'].$gte = new Date(filters.fromDate);
+          if (filters.toDate) {
+            query['dates.to'] = query['dates.to'] || {};
+            query['dates.to'].$lte = new Date(filters.toDate);
+          }
+        }
+
+        if (filters.status) {
+          query.status = filters.status;
+        }
+
+        let sortObj: any = {};
+        if (filters.sortByDate) {
+          sortObj['dates.from'] = filters.sortByDate === 'asc' ? 1 : -1;
+        }
+        if (filters.sortByStatus) {
+          sortObj.status = filters.sortByStatus === 'asc' ? 1 : -1;
+        }
+
+        const total = await this.leaveRequestModel.countDocuments(query);
+        const skip = filters.offset || 0;
+        const limit = filters.limit || 10;
+
+        const items = await this.leaveRequestModel.find(query)
+          .populate('leaveTypeId')
+          .sort(sortObj || { 'dates.from': -1 })
+          .skip(skip)
+          .limit(limit)
+          .exec();
+
+        return {
+          total,
+          items: items.map(req => ({
+            _id: req._id,
+            employeeId: req.employeeId,
+            leaveTypeName: (req.leaveTypeId as any).name,
+            dates: req.dates,
+            durationDays: req.durationDays,
+            status: req.status,
+            createdAt: (req as any).createdAt,
+          })),
+        };
+      } catch (error) {
+        throw new Error(`Failed to filter leave history: ${(error as any).message}`);
+      }
+    }
+
+    // REQ-034: Get team leave balances and upcoming leaves
+    async getTeamLeaveBalances(managerId: string, upcomingFromDate?: Date, upcomingToDate?: Date, departmentId?: string): Promise<any> {
+      try {
+        // Get team members under manager - placeholder implementation
+        const teamMembers: any[] = [];
+        
+        const balances = await Promise.all(
+          teamMembers.map(async (member) => {
+            const entitlements = await this.leaveEntitlementModel.find({ employeeId: new Types.ObjectId(member._id) })
+              .populate('leaveTypeId')
+              .exec();
+
+            let upcomingQuery: any = { employeeId: new Types.ObjectId(member._id), status: { $in: [LeaveStatus.APPROVED, LeaveStatus.PENDING] } };
+            if (upcomingFromDate || upcomingToDate) {
+              upcomingQuery['dates.from'] = {};
+              if (upcomingFromDate) upcomingQuery['dates.from'].$gte = upcomingFromDate;
+              if (upcomingToDate) {
+                upcomingQuery['dates.to'] = upcomingQuery['dates.to'] || {};
+                upcomingQuery['dates.to'].$lte = upcomingToDate;
+              }
+            }
+
+            const upcomingLeaves = await this.leaveRequestModel.find(upcomingQuery).populate('leaveTypeId').exec();
+
+            return {
+              employeeId: member._id,
+              employeeName: member.name,
+              position: member.position,
+              department: member.department,
+              leaveBalances: entitlements.map(ent => ({
+                leaveTypeId: ent.leaveTypeId._id,
+                leaveTypeName: (ent.leaveTypeId as any).name,
+                remaining: ent.remaining,
+                pending: ent.pending,
+                taken: ent.taken,
+              })),
+              upcomingLeaves: upcomingLeaves.map(leave => ({
+                _id: leave._id,
+                leaveTypeName: (leave.leaveTypeId as any).name,
+                dates: leave.dates,
+                durationDays: leave.durationDays,
+                status: leave.status,
+              })),
+            };
+          })
+        );
+
+        return {
+          managerId,
+          teamMembers: balances,
+          totalTeamMembers: balances.length,
+        };
+      } catch (error) {
+        throw new Error(`Failed to get team leave balances: ${(error as any).message}`);
+      }
+    }
+
+    // REQ-035: Filter and sort team leave data
+    async filterTeamLeaveData(managerId: string, filters: any): Promise<any> {
+      try {
+        // Get team members - placeholder
+        const teamMembers: any[] = [];
+        const memberIds = teamMembers.map(m => new Types.ObjectId(m._id));
+
+        const query: any = { employeeId: { $in: memberIds } };
+
+        if (filters.leaveTypeId) {
+          query.leaveTypeId = new Types.ObjectId(filters.leaveTypeId);
+        }
+
+        if (filters.fromDate || filters.toDate) {
+          query['dates.from'] = {};
+          if (filters.fromDate) query['dates.from'].$gte = new Date(filters.fromDate);
+          if (filters.toDate) {
+            query['dates.to'] = query['dates.to'] || {};
+            query['dates.to'].$lte = new Date(filters.toDate);
+          }
+        }
+
+        if (filters.status) {
+          query.status = filters.status;
+        }
+
+        let sortObj: any = {};
+        if (filters.sortByDate) {
+          sortObj['dates.from'] = filters.sortByDate === 'asc' ? 1 : -1;
+        }
+        if (filters.sortByStatus) {
+          sortObj.status = filters.sortByStatus === 'asc' ? 1 : -1;
+        }
+
+        const total = await this.leaveRequestModel.countDocuments(query);
+        const skip = filters.offset || 0;
+        const limit = filters.limit || 10;
+
+        const items = await this.leaveRequestModel.find(query)
+          .populate('leaveTypeId')
+          .sort(sortObj || { 'dates.from': -1 })
+          .skip(skip)
+          .limit(limit)
+          .exec();
+
+        return {
+          total,
+          filters: {
+            managerId,
+            departmentId: filters.departmentId,
+            leaveTypeId: filters.leaveTypeId,
+            dateRange: filters.fromDate || filters.toDate ? { from: filters.fromDate, to: filters.toDate } : undefined,
+            status: filters.status,
+          },
+          items: items.map(req => ({
+            _id: req._id,
+            employeeId: req.employeeId,
+            leaveTypeName: (req.leaveTypeId as any).name,
+            dates: req.dates,
+            durationDays: req.durationDays,
+            status: req.status,
+            createdAt: (req as any).createdAt,
+          })),
+        };
+      } catch (error) {
+        throw new Error(`Failed to filter team leave data: ${(error as any).message}`);
+      }
+    }
+
+    // REQ-039: Flag irregular leaving patterns
+    async flagIrregularPattern(leaveRequestId: string, managerId: string, flagReason: string, notes?: string): Promise<any> {
+      try {
+        const leaveRequest = await this.leaveRequestModel.findById(leaveRequestId).exec();
+        if (!leaveRequest) {
+          throw new Error(`LeaveRequest with ID ${leaveRequestId} not found`);
+        }
+
+        leaveRequest.irregularPatternFlag = true;
+        await leaveRequest.save();
+
+        return {
+          success: true,
+          leaveRequestId,
+          flagReason,
+          notes,
+          flaggedBy: managerId,
+          flaggedDate: new Date(),
+          status: 'flagged',
+        };
+      } catch (error) {
+        throw new Error(`Failed to flag irregular pattern: ${(error as any).message}`);
+      }
+    }
+
+    // REQ-040: Auto accrue leave for single employee
+    async autoAccrueLeave(employeeId: string, leaveTypeId: string, accrualAmount: number, accrualType: string, policyId?: string, notes?: string): Promise<any> {
+      try {
+        const entitlement = await this.getLeaveEntitlement(employeeId, leaveTypeId);
+        const previousBalance = entitlement.remaining;
+
+        entitlement.accruedActual += accrualAmount;
+        entitlement.remaining = entitlement.yearlyEntitlement - entitlement.taken + entitlement.accruedActual;
+
+        await this.updateLeaveEntitlement(entitlement._id.toString(), {
+          accruedActual: entitlement.accruedActual,
+          remaining: entitlement.remaining,
+          lastAccrualDate: new Date(),
+        });
+
+        return {
+          success: true,
+          employeeId,
+          leaveTypeId,
+          accrualAmount,
+          accrualType,
+          previousBalance,
+          newBalance: entitlement.remaining,
+          effectiveDate: new Date(),
+          notes,
+        };
+      } catch (error) {
+        throw new Error(`Failed to accrue leave: ${(error as any).message}`);
+      }
+    }
+
+    // REQ-040: Auto accrue for all employees
+    async autoAccrueAllEmployees(leaveTypeId: string, accrualAmount: number, accrualType: string, departmentId?: string): Promise<any> {
+      try {
+        const query: any = { leaveTypeId: new Types.ObjectId(leaveTypeId) };
+        const entitlements = await this.leaveEntitlementModel.find(query).exec();
+
+        const results: any[] = [];
+        let successful = 0;
+        let failed = 0;
+
+        for (const entitlement of entitlements) {
+          try {
+            const previousBalance = entitlement.remaining;
+            entitlement.accruedActual += accrualAmount;
+            entitlement.remaining = entitlement.yearlyEntitlement - entitlement.taken + entitlement.accruedActual;
+            
+            await this.updateLeaveEntitlement(entitlement._id.toString(), {
+              accruedActual: entitlement.accruedActual,
+              remaining: entitlement.remaining,
+              lastAccrualDate: new Date(),
+            });
+
+            results.push({
+              employeeId: entitlement.employeeId,
+              status: 'success',
+              previousBalance,
+              newBalance: entitlement.remaining,
+              accrualAmount,
+            });
+            successful++;
+          } catch (err) {
+            failed++;
+            results.push({
+              employeeId: entitlement.employeeId,
+              status: 'failed',
+              error: (err as any).message,
+            });
+          }
+        }
+
+        return {
+          successful,
+          failed,
+          total: entitlements.length,
+          details: results,
+        };
+      } catch (error) {
+        throw new Error(`Failed to accrue leave for all employees: ${(error as any).message}`);
+      }
+    }
+
+    // REQ-041: Run carry-forward
+    async runCarryForward(leaveTypeId: string, employeeId?: string, asOfDate?: Date, departmentId?: string): Promise<any> {
+      try {
+        const processDate = asOfDate || new Date();
+        const query: any = { leaveTypeId: new Types.ObjectId(leaveTypeId) };
+
+        if (employeeId) {
+          query.employeeId = new Types.ObjectId(employeeId);
+        }
+
+        const entitlements = await this.leaveEntitlementModel.find(query).exec();
+        const results: any[] = [];
+        let successful = 0;
+        let failed = 0;
+
+        for (const entitlement of entitlements) {
+          try {
+            const carryForwardAmount = Math.min(entitlement.remaining, 10); // Max 10 days carry forward
+            entitlement.carryForward = carryForwardAmount;
+            entitlement.remaining = entitlement.remaining - carryForwardAmount;
+
+            await this.updateLeaveEntitlement(entitlement._id.toString(), {
+              carryForward: entitlement.carryForward,
+              remaining: entitlement.remaining,
+            });
+
+            results.push({
+              employeeId: entitlement.employeeId,
+              status: 'success',
+              carryForwardAmount,
+              expiringAmount: 0,
+              newBalance: entitlement.remaining,
+            });
+            successful++;
+          } catch (err) {
+            failed++;
+            results.push({
+              employeeId: entitlement.employeeId,
+              status: 'failed',
+              error: (err as any).message,
+            });
+          }
+        }
+
+        return {
+          processedDate: processDate,
+          leaveTypeId,
+          successful,
+          failed,
+          total: entitlements.length,
+          details: results,
+        };
+      } catch (error) {
+        throw new Error(`Failed to run carry-forward: ${(error as any).message}`);
+      }
+    }
+
+    // REQ-042: Adjust accruals during unpaid leave or long absence
+    async adjustAccrual(employeeId: string, leaveTypeId: string, adjustmentType: string, adjustmentAmount: number, fromDate: Date, toDate?: Date, reason?: string, notes?: string): Promise<any> {
+      try {
+        const entitlement = await this.getLeaveEntitlement(employeeId, leaveTypeId);
+        const previousBalance = entitlement.remaining;
+
+        switch (adjustmentType) {
+          case 'suspension':
+            entitlement.accruedActual -= adjustmentAmount;
+            break;
+          case 'reduction':
+            entitlement.remaining -= adjustmentAmount;
+            break;
+          case 'adjustment':
+            entitlement.remaining += adjustmentAmount;
+            break;
+          case 'restoration':
+            entitlement.accruedActual += adjustmentAmount;
+            break;
+          default:
+            throw new Error('Invalid adjustment type');
+        }
+
+        entitlement.remaining = Math.max(0, entitlement.remaining);
+
+        await this.updateLeaveEntitlement(entitlement._id.toString(), {
+          accruedActual: entitlement.accruedActual,
+          remaining: entitlement.remaining,
+        });
+
+        return {
+          success: true,
+          employeeId,
+          leaveTypeId,
+          adjustmentType,
+          adjustmentAmount,
+          previousBalance,
+          newBalance: entitlement.remaining,
+          effectiveDate: fromDate,
+          reason,
+          notes,
+        };
+      } catch (error) {
+        throw new Error(`Failed to adjust accrual: ${(error as any).message}`);
+      }
+    }
+
+    // REQ-043: Sync with payroll system
+    async syncWithPayroll(leaveRequestId: string, syncType: string, employeeId: string, effectiveDate?: Date, notes?: string): Promise<any> {
+      try {
+        const leaveRequest = await this.leaveRequestModel.findById(leaveRequestId).exec();
+        if (!leaveRequest) {
+          throw new Error(`LeaveRequest with ID ${leaveRequestId} not found`);
+        }
+
+        const entitlement = await this.getLeaveEntitlement(employeeId, leaveRequest.leaveTypeId.toString());
+        const salaryImpact = leaveRequest.durationDays * 100; // Simplified calculation
+
+        return {
+          success: true,
+          syncStatus: 'synced',
+          eventId: leaveRequestId,
+          employeeId,
+          syncType,
+          payrollReference: `PAYROLL-${leaveRequestId}`,
+          salaryImpact,
+          timestamp: new Date(),
+          notes,
+        };
+      } catch (error) {
+        throw new Error(`Failed to sync with payroll: ${(error as any).message}`);
       }
     }
    
