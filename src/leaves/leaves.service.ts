@@ -19,6 +19,8 @@ import { Calendar,CalendarDocument } from './models/calendar.schema';
 import { LeaveCategory,LeaveCategoryDocument } from './models/leave-category.schema';  
 
 import { EmployeeProfile,EmployeeProfileDocument } from '../employee-profile/models/employee-profile.schema';
+// import { PositionAssignment, PositionAssignmentDocument } from '../organization-structure/models/position-assignment.schema';
+// import { Position, PositionDocument } from '../organization-structure/models/position.schema';
 
 import { CreateLeavePolicyDto } from './dto/CreateLeavePolicy.dto';  
 import { UpdateLeavePolicyDto } from './dto/UpdateLeavePolicy.dto';  
@@ -172,7 +174,9 @@ export class LeavesService {
     @InjectModel(LeaveType.name) private leaveTypeModel: mongoose.Model<LeaveTypeDocument>,
     @InjectModel(Attachment.name) private attachmentModel: mongoose.Model<AttachmentDocument>,
     @InjectModel(Calendar.name) private calendarModel: mongoose.Model<CalendarDocument>,
-    //@InjectModel(EmployeeProfile.name) private employeeProfileModel: mongoose.Model<EmployeeProfileDocument>,
+    @InjectModel(EmployeeProfile.name) private employeeProfileModel: mongoose.Model<EmployeeProfileDocument>,
+    // @InjectModel(PositionAssignment.name) private positionAssignmentModel: mongoose.Model<PositionAssignmentDocument>,
+    // @InjectModel(Position.name) private positionModel: mongoose.Model<PositionDocument>,
     @InjectModel(LeaveCategory.name) private leaveCategoryModel: mongoose.Model<LeaveCategoryDocument>,
     //private notificationService: NotificationService, // Assuming a Notification service is available
   ) {}
@@ -337,12 +341,6 @@ async isBlockedDateRange(from: string, to: string): Promise<boolean> {
             throw new Error(validationResult.errorMessage);
         }
 
-        // // REQ-020: Route to Line Manager/Department Head
-        // const lineManagerId = await this.getLineManagerId(employeeId);
-        // if (!lineManagerId) {
-        //     throw new Error('Line manager not found. Cannot route leave request for approval.');
-        // }
-
         // Create leave request with initial approval flow
         const leaveRequest = new this.leaveRequestModel({
             ...createLeaveRequestDto,
@@ -355,12 +353,13 @@ async isBlockedDateRange(from: string, to: string): Promise<boolean> {
             }],
         });
 
-        // Update pending balance
+        // Update pending balance atomically
         const entitlement = await this.getLeaveEntitlement(employeeId, leaveTypeId);
-        entitlement.pending += durationDays;
-        await this.updateLeaveEntitlement(entitlement._id.toString(), {
-            pending: entitlement.pending,
-        });
+        await this.leaveEntitlementModel.findByIdAndUpdate(
+          entitlement._id,
+          { $inc: { pending: durationDays } },
+          { new: true }
+        ).exec();
 
         const savedLeaveRequest = await leaveRequest.save();
         return savedLeaveRequest;
@@ -406,46 +405,7 @@ async isBlockedDateRange(from: string, to: string): Promise<boolean> {
         return { isValid: true };
     }
 
-    // // Phase 2: REQ-020 - Get Line Manager/Department Head ID
-    // private async getLineManagerId(employeeId: string): Promise<Types.ObjectId | null> {
-    //     const employeeProfile = await this.employeeProfileModel.findById(employeeId).exec();
-    //     if (!employeeProfile || !employeeProfile.primaryPositionId) {
-    //         return null;
-    //     }
-
-    //     const PositionModel = this.employeeProfileModel.db.model('Position');
-    //     const position = await PositionModel.findById(employeeProfile.primaryPositionId).exec();
-
-    //     if (!position || !position.reportsToPositionId) {
-    //         if (employeeProfile.primaryDepartmentId) {
-    //             const DepartmentModel = this.employeeProfileModel.db.model('Department');
-    //             const department = await DepartmentModel.findById(employeeProfile.primaryDepartmentId).exec();
-    //             if (department && department.headPositionId) {
-    //                 const PositionAssignmentModel = this.employeeProfileModel.db.model('PositionAssignment');
-    //                 const assignment = await PositionAssignmentModel.findOne({
-    //                     positionId: department.headPositionId,
-    //                     endDate: null,
-    //                 }).exec();
-    //                 if (assignment) {
-    //                     return assignment.employeeProfileId;
-    //                 }
-    //             }
-    //         }
-    //         return null;
-    //     }
-
-    //     const PositionAssignmentModel = this.employeeProfileModel.db.model('PositionAssignment');
-    //     const assignment = await PositionAssignmentModel.findOne({
-    //         positionId: position.reportsToPositionId,
-    //         endDate: null,
-    //     }).exec();
-
-    //     if (assignment) {
-    //         return assignment.employeeProfileId;
-    //     }
-
-    //     return null;
-    // }
+    // Phase 2: REQ-020 - Get Line Manager/Department Head ID
 
 
 
@@ -471,17 +431,18 @@ async isBlockedDateRange(from: string, to: string): Promise<boolean> {
         throw new Error('Only pending requests can be modified');
       }
 
-      // If duration changed, update pending balance
+      // If duration changed, update pending balance atomically
       if (updateLeaveRequestDto.durationDays && updateLeaveRequestDto.durationDays !== leaveRequest.durationDays) {
         const entitlement = await this.getLeaveEntitlement(
           leaveRequest.employeeId.toString(),
           leaveRequest.leaveTypeId.toString()
         );
-        const oldPending = entitlement.pending;
-        entitlement.pending = oldPending - leaveRequest.durationDays + updateLeaveRequestDto.durationDays;
-        await this.updateLeaveEntitlement(entitlement._id.toString(), {
-          pending: entitlement.pending,
-        });
+        const delta = updateLeaveRequestDto.durationDays - leaveRequest.durationDays; // positive => increase pending
+        await this.leaveEntitlementModel.findByIdAndUpdate(
+          entitlement._id,
+          { $inc: { pending: delta } },
+          { new: true }
+        ).exec();
       }
 
       const updatedLeaveRequest = await this.leaveRequestModel
@@ -522,15 +483,19 @@ async deleteLeaveRequest(id: string): Promise<LeaveRequestDocument> {
         throw new Error('Only pending requests can be canceled');
       }
 
-      // Release pending balance
+      // Release pending balance atomically (and clamp to 0 if negative)
       const entitlement = await this.getLeaveEntitlement(
         leaveRequest.employeeId.toString(),
         leaveRequest.leaveTypeId.toString()
       );
-      entitlement.pending = Math.max(0, entitlement.pending - leaveRequest.durationDays);
-      await this.updateLeaveEntitlement(entitlement._id.toString(), {
-        pending: entitlement.pending,
-      });
+      const updated = await this.leaveEntitlementModel.findByIdAndUpdate(
+        entitlement._id,
+        { $inc: { pending: -leaveRequest.durationDays } },
+        { new: true }
+      ).exec();
+      if (updated && updated.pending < 0) {
+        await this.leaveEntitlementModel.findByIdAndUpdate(entitlement._id, { $set: { pending: 0 } }).exec();
+      }
 
       // Update status to canceled
       leaveRequest.status = LeaveStatus.CANCELLED;
@@ -715,17 +680,15 @@ async calculateAccrual(employeeId: string, leaveTypeId: string, accrualMethod: A
     default:
       throw new Error('Invalid accrual method');
   }
-  leaveEntitlement.accruedActual += accrualAmount;  // Adding the accrued amount to the actual accrual
-
-  // Ensure the remaining leave is updated based on the balance
-  leaveEntitlement.remaining = leaveEntitlement.yearlyEntitlement - leaveEntitlement.taken - leaveEntitlement.accruedActual;
-
-  // Update the leave entitlement in the database
-  await this.updateLeaveEntitlement(leaveEntitlement._id.toString(), {
-    accruedActual: leaveEntitlement.accruedActual,
-    remaining: leaveEntitlement.remaining,
-    lastAccrualDate: new Date(),
-  });
+  // Apply accrual atomically: increment accruedActual and remaining accordingly
+  await this.leaveEntitlementModel.findByIdAndUpdate(
+    leaveEntitlement._id,
+    {
+      $inc: { accruedActual: accrualAmount, remaining: accrualAmount },
+      $set: { lastAccrualDate: new Date() },
+    },
+    { new: true }
+  ).exec();
 
   console.log(`Leave entitlement for employee ${employeeId} updated. New balance: ${leaveEntitlement.remaining}`);
 }
@@ -742,18 +705,14 @@ async assignPersonalizedEntitlement(
     throw new Error(`Leave entitlement for employee ${employeeId} with leave type ${leaveTypeId} not found`);
   }
 
-  // Add the personalized entitlement to the `accruedActual` or `carryForward`
-  // Here, let's assume personalized entitlements are added to `accruedActual`
-  //2b2y shoofy lw di hatt8ayar
-  entitlement.accruedActual += personalizedEntitlement;
-
-  entitlement.remaining = entitlement.yearlyEntitlement - entitlement.taken - entitlement.accruedActual;// di bardo hatt8ayar lw 8ayarty el fo2
-  
-  return await this.updateLeaveEntitlement(entitlement._id.toString(), {  
-    accruedActual: entitlement.accruedActual,
-    remaining: entitlement.remaining,
-    
-  });
+  // Atomically add personalized entitlement: increase accruedActual and decrease remaining
+  const updated = await this.leaveEntitlementModel.findByIdAndUpdate(
+    entitlement._id,
+    { $inc: { accruedActual: personalizedEntitlement, remaining: -personalizedEntitlement } },
+    { new: true }
+  ).exec();
+  if (!updated) throw new Error(`Leave entitlement with ID ${entitlement._id} not found`);
+  return updated as LeaveEntitlementDocument;
 }
 
 
@@ -807,45 +766,51 @@ async updateLeaveType(
 
   return updatedLeaveType;
 }
-
-    // // Phase 2: REQ-020 - Get pending requests for manager review
+    // REQ-013: Get pending requests for manager review
     // async getPendingRequestsForManager(managerId: string): Promise<LeaveRequestDocument[]> {
-    //     const managerProfile = await this.employeeProfileModel.findById(managerId).exec();
+    //   try {
+    //     const managerProfile = await this.employeeProfileModel
+    //       .findById(new Types.ObjectId(managerId))
+    //       .populate('primaryPositionId')
+    //       .exec();
+
     //     if (!managerProfile || !managerProfile.primaryPositionId) {
-    //         return [];
+    //       return [];
     //     }
 
-    //     const PositionModel = this.employeeProfileModel.db.model('Position');
-    //     const managerPosition = await PositionModel.findById(managerProfile.primaryPositionId).exec();
-    //     if (!managerPosition) {
-    //         return [];
-    //     }
+    //     const managerPositionId = (managerProfile.primaryPositionId as any)._id;
 
-    //     const reportingPositions = await PositionModel.find({
-    //         reportsToPositionId: managerPosition._id,
-    //     }).select('_id').exec();
+    //     // Find all positions that report to this manager
+    //     const reportingPositions = await this.positionModel
+    //       .find({ reportsToPositionId: managerPositionId, isActive: true })
+    //       .exec();
 
-    //     const positionIds = reportingPositions.map(p => p._id);
-    //     const PositionAssignmentModel = this.employeeProfileModel.db.model('PositionAssignment');
-    //     const assignments = await PositionAssignmentModel.find({
-    //         positionId: { $in: positionIds },
-    //         endDate: null,
-    //     }).select('employeeProfileId').exec();
+    //     const reportingPositionIds = reportingPositions.map(p => p._id);
+
+    //     // Find all employees currently assigned to these positions
+    //     const assignments = await this.positionAssignmentModel
+    //       .find({
+    //         positionId: { $in: reportingPositionIds },
+    //         $or: [{ endDate: null }, { endDate: { $gte: new Date() } }],
+    //       })
+    //       .exec();
 
     //     const employeeIds = assignments.map(a => a.employeeProfileId);
 
-    //     // REQ-023: Include delegated requests
-    //     const delegatedManagerIds = await this.getDelegatedManagers(managerId);
-    //     const allManagerIds = [new Types.ObjectId(managerId), ...delegatedManagerIds];
-
-    //     return await this.leaveRequestModel.find({
+    //     // Get pending requests for team members
+    //     const pendingRequests = await this.leaveRequestModel
+    //       .find({
     //         employeeId: { $in: employeeIds },
     //         status: LeaveStatus.PENDING,
-    //         $or: [
-    //             { 'approvalFlow.0.decidedBy': { $in: allManagerIds } },
-    //             { 'approvalFlow.0.status': 'PENDING' }
-    //         ],
-    //     }).exec();
+    //       })
+    //       .populate('leaveTypeId')
+    //       .populate('employeeId', 'firstName lastName employeeNumber')
+    //       .exec();
+
+    //     return pendingRequests;
+    //   } catch (error) {
+    //     throw new Error(`Failed to get pending requests for manager: ${(error as any).message}`);
+    //   }
     // }
 
     // Phase 2: REQ-023 - Get delegated managers for a manager
@@ -978,18 +943,18 @@ async updateLeaveType(
         leaveRequest.leaveTypeId.toString()
       );
 
-      // BR 32: Proper balance calculation - move from pending to taken
-      entitlement.pending = Math.max(0, entitlement.pending - leaveRequest.durationDays);
-      entitlement.taken += leaveRequest.durationDays;
-        
-      // BR 32: Recalculate remaining balance (yearlyEntitlement - taken)
-      entitlement.remaining = entitlement.yearlyEntitlement - entitlement.taken;
-
-      await this.updateLeaveEntitlement(entitlement._id.toString(), {
-        pending: entitlement.pending,
-        taken: entitlement.taken,
-        remaining: entitlement.remaining,
-      });
+      // BR 32: Proper balance calculation - move from pending to taken atomically
+      await this.leaveEntitlementModel.findByIdAndUpdate(
+        entitlement._id,
+        {
+          $inc: {
+            pending: -leaveRequest.durationDays,
+            taken: leaveRequest.durationDays,
+            remaining: -leaveRequest.durationDays,
+          },
+        },
+        { new: true }
+      ).exec();
     }
 
 
@@ -1038,10 +1003,14 @@ async updateLeaveType(
           leaveRequest.employeeId.toString(),
           leaveRequest.leaveTypeId.toString()
         );
-        entitlement.pending = Math.max(0, entitlement.pending - leaveRequest.durationDays);
-        await this.updateLeaveEntitlement(entitlement._id.toString(), {
-          pending: entitlement.pending,
-        });
+        const updated = await this.leaveEntitlementModel.findByIdAndUpdate(
+          entitlement._id,
+          { $inc: { pending: -leaveRequest.durationDays } },
+          { new: true }
+        ).exec();
+        if (updated && updated.pending < 0) {
+          await this.leaveEntitlementModel.findByIdAndUpdate(entitlement._id, { $set: { pending: 0 } }).exec();
+        }
         await this.notifyStakeholders(leaveRequest, 'overridden_rejected');
       }
 
@@ -1365,17 +1334,16 @@ async updateLeaveType(
     // REQ-040: Auto accrue leave for single employee
     async autoAccrueLeave(employeeId: string, leaveTypeId: string, accrualAmount: number, accrualType: string, policyId?: string, notes?: string): Promise<any> {
       try {
-        const entitlement = await this.getLeaveEntitlement(employeeId, leaveTypeId);
-        const previousBalance = entitlement.remaining;
+          const entitlement = await this.getLeaveEntitlement(employeeId, leaveTypeId);
+          const previousBalance = entitlement.remaining;
 
-        entitlement.accruedActual += accrualAmount;
-        entitlement.remaining = entitlement.yearlyEntitlement - entitlement.taken + entitlement.accruedActual;
-
-        await this.updateLeaveEntitlement(entitlement._id.toString(), {
-          accruedActual: entitlement.accruedActual,
-          remaining: entitlement.remaining,
-          lastAccrualDate: new Date(),
-        });
+          // Atomically increment accruedActual and remaining by the accrual amount
+          const updated = await this.leaveEntitlementModel.findByIdAndUpdate(
+            entitlement._id,
+            { $inc: { accruedActual: accrualAmount, remaining: accrualAmount }, $set: { lastAccrualDate: new Date() } },
+            { new: true }
+          ).exec();
+          if (updated) entitlement.remaining = updated.remaining;
 
         return {
           success: true,
@@ -1406,20 +1374,17 @@ async updateLeaveType(
         for (const entitlement of entitlements) {
           try {
             const previousBalance = entitlement.remaining;
-            entitlement.accruedActual += accrualAmount;
-            entitlement.remaining = entitlement.yearlyEntitlement - entitlement.taken + entitlement.accruedActual;
-            
-            await this.updateLeaveEntitlement(entitlement._id.toString(), {
-              accruedActual: entitlement.accruedActual,
-              remaining: entitlement.remaining,
-              lastAccrualDate: new Date(),
-            });
+            await this.leaveEntitlementModel.findByIdAndUpdate(
+              entitlement._id,
+              { $inc: { accruedActual: accrualAmount, remaining: accrualAmount }, $set: { lastAccrualDate: new Date() } },
+              { new: true }
+            ).exec();
 
             results.push({
               employeeId: entitlement.employeeId,
               status: 'success',
               previousBalance,
-              newBalance: entitlement.remaining,
+              newBalance: entitlement.remaining + accrualAmount,
               accrualAmount,
             });
             successful++;
@@ -1462,13 +1427,12 @@ async updateLeaveType(
         for (const entitlement of entitlements) {
           try {
             const carryForwardAmount = Math.min(entitlement.remaining, 10); // Max 10 days carry forward
-            entitlement.carryForward = carryForwardAmount;
-            entitlement.remaining = entitlement.remaining - carryForwardAmount;
-
-            await this.updateLeaveEntitlement(entitlement._id.toString(), {
-              carryForward: entitlement.carryForward,
-              remaining: entitlement.remaining,
-            });
+            // Atomically set carryForward and decrement remaining
+            await this.leaveEntitlementModel.findByIdAndUpdate(
+              entitlement._id,
+              { $set: { carryForward: carryForwardAmount }, $inc: { remaining: -carryForwardAmount } },
+              { new: true }
+            ).exec();
 
             results.push({
               employeeId: entitlement.employeeId,
@@ -1501,52 +1465,62 @@ async updateLeaveType(
       }
     }
 
-    // REQ-042: Adjust accruals during unpaid leave or long absence
-    async adjustAccrual(employeeId: string, leaveTypeId: string, adjustmentType: string, adjustmentAmount: number, fromDate: Date, toDate?: Date, reason?: string, notes?: string): Promise<any> {
-      try {
-        const entitlement = await this.getLeaveEntitlement(employeeId, leaveTypeId);
-        const previousBalance = entitlement.remaining;
+// REQ-042: Adjust accruals during unpaid leave or long absence
+async adjustAccrual(employeeId: string,leaveTypeId: string,adjustmentType: string,adjustmentAmount: number,fromDate: Date,toDate?: Date,reason?: string,notes?: string,): Promise<any> {
+  try {
+    const entitlement = await this.getLeaveEntitlement(employeeId, leaveTypeId);
+    const previousBalance = entitlement.remaining;
 
-        switch (adjustmentType) {
-          case 'suspension':
-            entitlement.accruedActual -= adjustmentAmount;
-            break;
-          case 'reduction':
-            entitlement.remaining -= adjustmentAmount;
-            break;
-          case 'adjustment':
-            entitlement.remaining += adjustmentAmount;
-            break;
-          case 'restoration':
-            entitlement.accruedActual += adjustmentAmount;
-            break;
-          default:
-            throw new Error('Invalid adjustment type');
-        }
-
-        entitlement.remaining = Math.max(0, entitlement.remaining);
-
-        await this.updateLeaveEntitlement(entitlement._id.toString(), {
-          accruedActual: entitlement.accruedActual,
-          remaining: entitlement.remaining,
-        });
-
-        return {
-          success: true,
-          employeeId,
-          leaveTypeId,
-          adjustmentType,
-          adjustmentAmount,
-          previousBalance,
-          newBalance: entitlement.remaining,
-          effectiveDate: fromDate,
-          reason,
-          notes,
-        };
-      } catch (error) {
-        throw new Error(`Failed to adjust accrual: ${(error as any).message}`);
-      }
+    switch (adjustmentType) {
+      case 'suspension':
+        entitlement.accruedActual -= adjustmentAmount;
+        break;
+      case 'reduction':
+        entitlement.remaining -= adjustmentAmount;
+        break;
+      case 'adjustment':
+        entitlement.remaining += adjustmentAmount;
+        break;
+      case 'restoration':
+        entitlement.accruedActual += adjustmentAmount;
+        break;
+      default:
+        throw new Error('Invalid adjustment type');
     }
+
+    // Recalculate remaining when we changed accruedActual
+    if (adjustmentType === 'suspension' || adjustmentType === 'restoration') {
+      entitlement.remaining =
+        entitlement.yearlyEntitlement -
+        entitlement.taken +
+        entitlement.accruedActual;
+    }
+
+    // Clamp to avoid negative remaining
+    entitlement.remaining = Math.max(0, entitlement.remaining);
+
+    // Save and get the updated doc back
+    const updated = await this.updateLeaveEntitlement(entitlement._id.toString(), {
+      accruedActual: entitlement.accruedActual,
+      remaining: entitlement.remaining,
+    });
+
+    return {
+      success: true,
+      employeeId,
+      leaveTypeId,
+      adjustmentType,
+      adjustmentAmount,
+      previousBalance,
+      newBalance: updated.remaining,
+      effectiveDate: fromDate,
+      reason,
+      notes,
+    };
+  } catch (error) {
+    throw new Error('Failed to adjust accrual: ${(error as any).message}');
+  }
+}
 
     // REQ-043: Sync with payroll system
     async syncWithPayroll(leaveRequestId: string, syncType: string, employeeId: string, effectiveDate?: Date, notes?: string): Promise<any> {
@@ -1575,14 +1549,5 @@ async updateLeaveType(
       }
     }
    
-
-
-
-
-
-
-
-
-
 
 }
