@@ -1,9 +1,10 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, BadRequestException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { populate } from 'dotenv';
 import { Types } from 'mongoose';
 import mongoose from 'mongoose';
+import { HolidayType } from '../time-management/models/enums';
 import { HydratedDocument } from 'mongoose';
 
 
@@ -27,6 +28,7 @@ import { CreateLeaveEntitlementDto } from './dto/CreateLeaveEntitlement.dto';
 import { UpdateLeaveEntitlementDto } from './dto/UpdateLeaveEntitlement.dto'; 
 import { CreateLeaveTypeDto } from './dto/CreateLeaveType.dto';
 import { CreateLeaveCategoryDto } from './dto/CreateLeaveCategory.dto';
+import { CreateCalendarDto } from './dto/CreateCalendar.dto';
 import { UpdateLeaveTypeDto } from './dto/UpdateLeaveType.dto'; 
 import { LeaveStatus } from './enums/leave-status.enum';
 //import { NotificationService } from '../notification/notification.service'; // Assuming a notification service
@@ -42,6 +44,116 @@ import { RejectLeaveRequestDto } from './dto/RejectLeaveRequest.dto';
 
 @Injectable()
 export class LeavesService {
+      // Calendar Management
+      async createCalendar(dto: CreateCalendarDto): Promise<CalendarDocument> {
+        // Normalize holidays: accept either array of ObjectId strings or embedded holiday objects
+        const holidayIds: Types.ObjectId[] = [];
+        if (dto.holidays && Array.isArray(dto.holidays)) {
+          // Try to get Holiday model from same connection (registered in time-management module)
+          let HolidayModel: any = null;
+          try {
+            HolidayModel = this.calendarModel.db.model('Holiday');
+          } catch (err) {
+            HolidayModel = null;
+          }
+
+          for (const h of dto.holidays) {
+            if (!h) continue;
+            // If already an id string or ObjectId-like, push as ObjectId
+            if (typeof h === 'string' || h instanceof Types.ObjectId) {
+              holidayIds.push(new Types.ObjectId(h));
+              continue;
+            }
+
+            // otherwise assume it's an object with { name, date, description }
+            if (HolidayModel) {
+              try {
+                const created: any = await HolidayModel.create({
+                  type: HolidayType.ORGANIZATIONAL,
+                  startDate: new Date(h.date),
+                  endDate: h.date ? new Date(h.date) : undefined,
+                  name: h.name || undefined,
+                  active: true,
+                });
+                holidayIds.push(created._id);
+                continue;
+              } catch (err) {
+                // if creation failed, skip this holiday
+                console.warn('Failed to create Holiday document for calendar import:', err);
+              }
+            }
+
+            // fallback: skip or attempt to coerce
+          }
+        }
+
+        const doc = new this.calendarModel({
+          year: dto.year,
+          holidays: holidayIds,
+          blockedPeriods: dto.blockedPeriods?.map(p => ({
+            from: new Date(p.from),
+            to: new Date(p.to),
+            reason: p.reason || ''
+          })) || []
+        });
+        return await doc.save();
+      }
+
+      async getCalendarByYear(year: number): Promise<CalendarDocument | null> {
+        // Populate holidays so callers receive full holiday documents (dates/names)
+        return await this.calendarModel.findOne({ year }).populate('holidays').exec();
+      }
+
+      async updateCalendar(year: number, dto: CreateCalendarDto): Promise<CalendarDocument | null> {
+        const holidayIds: Types.ObjectId[] = [];
+        if (dto.holidays && Array.isArray(dto.holidays)) {
+          let HolidayModel: any = null;
+          try {
+            HolidayModel = this.calendarModel.db.model('Holiday');
+          } catch (err) {
+            HolidayModel = null;
+          }
+
+          for (const h of dto.holidays) {
+            if (!h) continue;
+            if (typeof h === 'string' || h instanceof Types.ObjectId) {
+              holidayIds.push(new Types.ObjectId(h));
+              continue;
+            }
+
+            if (HolidayModel) {
+              try {
+                const created: any = await HolidayModel.create({
+                  type: HolidayType.ORGANIZATIONAL,
+                  startDate: new Date(h.date),
+                  endDate: h.date ? new Date(h.date) : undefined,
+                  name: h.name || undefined,
+                  active: true,
+                });
+                holidayIds.push(created._id);
+                continue;
+              } catch (err) {
+                console.warn('Failed to create Holiday document for calendar update:', err);
+              }
+            }
+          }
+        }
+
+        return await this.calendarModel.findOneAndUpdate(
+          { year },
+          {
+            $set: {
+              holidays: holidayIds,
+              blockedPeriods: dto.blockedPeriods?.map(p => ({
+                from: new Date(p.from),
+                to: new Date(p.to),
+                reason: p.reason || ''
+              })) || []
+            }
+          },
+          { upsert: true, new: true }
+        ).exec();
+      }
     constructor(
     @InjectModel(LeavePolicy.name) private leavePolicyModel: mongoose.Model<LeavePolicyDocument>,
     @InjectModel(LeaveRequest.name) private leaveRequestModel: mongoose.Model<LeaveRequestDocument>,
@@ -134,13 +246,24 @@ async createLeaveCategory(createLeaveCategoryDto: CreateLeaveCategoryDto): Promi
 
 
 
-async isBlockedDate(date: string): Promise<boolean> {
-  const calendar = await this.calendarModel.findOne({ year: new Date().getFullYear() }).exec();
+
+// Checks if any date in the range [from, to] overlaps with blocked periods in the calendar for that year
+async isBlockedDateRange(from: string, to: string): Promise<boolean> {
+  const year = new Date(from).getFullYear();
+  const calendar = await this.calendarModel.findOne({ year }).exec();
   if (!calendar) {
-    throw new Error('Calendar for the year not found');
+    console.warn('Calendar for year', year, 'not found; treating date as not blocked:', from, to);
+    return false;
   }
+  const start = new Date(from);
+  const end = new Date(to);
   return calendar.blockedPeriods.some(
-    (period) => new Date(period.from) <= new Date(date) && new Date(period.to) >= new Date(date)
+    (period) => {
+      const blockedStart = new Date(period.from);
+      const blockedEnd = new Date(period.to);
+      // Overlap: (start <= blockedEnd) && (end >= blockedStart)
+      return start <= blockedEnd && end >= blockedStart;
+    }
   );
 }
 
@@ -192,11 +315,10 @@ async isBlockedDate(date: string): Promise<boolean> {
             }
         }
 
-        // Check if dates fall on blocked periods
-        const isFromBlocked = await this.isBlockedDate(startDate.toISOString());
-        const isToBlocked = await this.isBlockedDate(endDate.toISOString());
-        if (isFromBlocked || isToBlocked) {
-            throw new Error('The requested leave dates fall on blocked periods.');
+        // Check if any date in the requested range falls on a blocked period
+        const isBlocked = await this.isBlockedDateRange(startDate.toISOString(), endDate.toISOString());
+        if (isBlocked) {
+          throw new BadRequestException('The requested leave dates fall on blocked periods.');
         }
 
         // Validate balance and overlaps

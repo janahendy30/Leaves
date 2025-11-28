@@ -1,3 +1,4 @@
+import { CreateCalendarDto } from './dto/CreateCalendar.dto';
 import { Controller, Post, Get, Put, Delete, Body, Param, UseGuards, Query, Req } from '@nestjs/common';
 import { LeavesService } from './leaves.service';
 import { CreateLeavePolicyDto } from './dto/CreateLeavePolicy.dto';
@@ -22,6 +23,21 @@ import { ProcessMultipleRequestsDto } from './dto/ProcessMultipleRequests.dto';
 
 @Controller('leaves')
 export class LeaveController {
+    // Calendar Endpoints
+    @Post('calendar')
+    async createCalendar(@Body() dto: CreateCalendarDto) {
+      return await this.leavesService.createCalendar(dto);
+    }
+
+    @Get('calendar/:year')
+    async getCalendar(@Param('year') year: string) {
+      return await this.leavesService.getCalendarByYear(Number(year));
+    }
+
+    @Put('calendar/:year')
+    async updateCalendar(@Param('year') year: string, @Body() dto: CreateCalendarDto) {
+      return await this.leavesService.updateCalendar(Number(year), dto);
+    }
   constructor(private readonly leavesService: LeavesService) {}
                        //leave policy Endpoints
   @Post('policy')
