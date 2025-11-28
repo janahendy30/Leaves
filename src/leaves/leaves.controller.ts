@@ -16,6 +16,16 @@ import { RejectLeaveRequestDto } from './dto/RejectLeaveRequest.dto';
 import { FinalizeLeaveRequestDto } from './dto/FinalizeLeaveRequest.dto';
 import { HrOverrideDecisionDto } from './dto/HrOverrideDecision.dto';
 import { ProcessMultipleRequestsDto } from './dto/ProcessMultipleRequests.dto';
+import { ViewLeaveBalanceDto } from './dto/ViewLeaveBalance.dto';
+import { ViewPastLeaveRequestsDto } from './dto/ViewPastLeaveRequests.dto';
+import { FilterLeaveHistoryDto } from './dto/FilterLeaveHistory.dto';
+import { ViewTeamLeaveBalancesDto } from './dto/ViewTeamLeaveBalances.dto';
+import { FilterTeamLeaveDataDto } from './dto/FilterTeamLeaveData.dto';
+import { FlagIrregularPatternDto, IrregularPatternAnalysisDto } from './dto/FlagIrregularPattern.dto';
+import { AutoAccrueLeaveDto, AccrueAllEmployeesDto } from './dto/AutoAccrueLeave.dto';
+import { RunCarryForwardDto } from './dto/CarryForward.dto';
+import { AccrualAdjustmentDto, AccrualSuspensionDto } from './dto/AccrualAdjustment.dto';
+import { SyncWithPayrollDto } from './dto/SyncWithPayroll.dto';
 //import { DelegateApprovalDto } from './dto/DelegateApproval.dto';
 
 // import { Roles } from './decorators/roles.decorator';
@@ -265,6 +275,133 @@ export class LeaveController {
   //@Roles('Employee')
   async cancelLeaveRequest(@Param('id') id: string) {
     return await this.leavesService.cancelLeaveRequest(id);
+  }
+
+  // REQ-031: Get detailed leave balance
+  @Get('balance-details/:employeeId')
+  async getLeaveBalanceDetails(
+    @Param('employeeId') employeeId: string,
+    @Query('leaveTypeId') leaveTypeId?: string
+  ) {
+    return await this.leavesService.getEmployeeLeaveBalance(employeeId, leaveTypeId);
+  }
+
+  // REQ-032: Get past leave requests
+  @Get('past-requests/:employeeId')
+  async getPastLeaveRequests(
+    @Param('employeeId') employeeId: string,
+    @Query('fromDate') fromDate?: string,
+    @Query('toDate') toDate?: string,
+    @Query('status') status?: string,
+    @Query('leaveTypeId') leaveTypeId?: string
+  ) {
+    return await this.leavesService.getPastLeaveRequests(employeeId, {
+      fromDate: fromDate ? new Date(fromDate) : undefined,
+      toDate: toDate ? new Date(toDate) : undefined,
+      status,
+      leaveTypeId,
+    });
+  }
+
+  // REQ-033: Filter leave history
+  @Post('filter-history')
+  async filterLeaveHistory(@Body() filterDto: FilterLeaveHistoryDto) {
+    return await this.leavesService.filterLeaveHistory(filterDto.employeeId, filterDto);
+  }
+
+  // REQ-034: View team leave balances and upcoming leaves
+  @Get('team-balances/:managerId')
+  async getTeamLeaveBalances(
+    @Param('managerId') managerId: string,
+    @Query('upcomingFromDate') upcomingFromDate?: string,
+    @Query('upcomingToDate') upcomingToDate?: string,
+    @Query('departmentId') departmentId?: string
+  ) {
+    return await this.leavesService.getTeamLeaveBalances(
+      managerId,
+      upcomingFromDate ? new Date(upcomingFromDate) : undefined,
+      upcomingToDate ? new Date(upcomingToDate) : undefined,
+      departmentId
+    );
+  }
+
+  // REQ-035: Filter team leave data
+  @Post('filter-team-data')
+  async filterTeamLeaveData(@Body() filterDto: FilterTeamLeaveDataDto) {
+    return await this.leavesService.filterTeamLeaveData(filterDto.managerId, filterDto);
+  }
+
+  // REQ-039: Flag irregular pattern
+  @Post('flag-irregular-pattern')
+  async flagIrregularPattern(@Body() flagDto: FlagIrregularPatternDto) {
+    return await this.leavesService.flagIrregularPattern(
+      flagDto.leaveRequestId,
+      flagDto.managerId,
+      flagDto.flagReason,
+      flagDto.notes
+    );
+  }
+
+  // REQ-040: Auto accrue leave for single employee
+  @Post('auto-accrue')
+  async autoAccrueLeave(@Body() accrueDto: AutoAccrueLeaveDto) {
+    return await this.leavesService.autoAccrueLeave(
+      accrueDto.employeeId,
+      accrueDto.leaveTypeId,
+      accrueDto.accrualAmount,
+      accrueDto.accrualType,
+      accrueDto.policyId,
+      accrueDto.notes
+    );
+  }
+
+  // REQ-040: Auto accrue leave for all employees
+  @Post('auto-accrue-all')
+  async autoAccrueAllEmployees(@Body() accrueAllDto: AccrueAllEmployeesDto) {
+    return await this.leavesService.autoAccrueAllEmployees(
+      accrueAllDto.leaveTypeId,
+      accrueAllDto.accrualAmount,
+      accrueAllDto.accrualType,
+      accrueAllDto.departmentId
+    );
+  }
+
+  // REQ-041: Run carry-forward
+  @Post('carry-forward')
+  async runCarryForward(@Body() carryForwardDto: RunCarryForwardDto) {
+    return await this.leavesService.runCarryForward(
+      carryForwardDto.leaveTypeId,
+      carryForwardDto.employeeId,
+      carryForwardDto.asOfDate,
+      carryForwardDto.departmentId
+    );
+  }
+
+  // REQ-042: Adjust accruals
+  @Post('adjust-accrual')
+  async adjustAccrual(@Body() adjustmentDto: AccrualAdjustmentDto) {
+    return await this.leavesService.adjustAccrual(
+      adjustmentDto.employeeId,
+      adjustmentDto.leaveTypeId,
+      adjustmentDto.adjustmentType,
+      adjustmentDto.adjustmentAmount,
+      adjustmentDto.fromDate,
+      adjustmentDto.toDate,
+      adjustmentDto.reason,
+      adjustmentDto.notes
+    );
+  }
+
+  // REQ-043: Sync with payroll
+  @Post('sync-payroll')
+  async syncWithPayroll(@Body() syncDto: SyncWithPayrollDto) {
+    return await this.leavesService.syncWithPayroll(
+      syncDto.leaveRequestId,
+      syncDto.syncType,
+      syncDto.employeeId,
+      syncDto.effectiveDate,
+      syncDto.notes
+    );
   }
 
   // Phase 2: REQ-023 - Delegate approval authority
