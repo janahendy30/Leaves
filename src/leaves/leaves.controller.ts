@@ -28,8 +28,9 @@ import { AccrualAdjustmentDto, AccrualSuspensionDto } from './dto/AccrualAdjustm
 import { SyncWithPayrollDto } from './dto/SyncWithPayroll.dto';
 //import { DelegateApprovalDto } from './dto/DelegateApproval.dto';
 
-// import { Roles } from './decorators/roles.decorator';
-// import { RolesGuard } from './guards/roles.guard';
+import { Roles } from './decorators/roles.decorator';
+import { RolesGuard } from './guards/roles.guard';
+import { SystemRole } from '../employee-profile/enums/employee-profile.enums';
 
 @Controller('leaves')
 export class LeaveController {
@@ -51,29 +52,29 @@ export class LeaveController {
   constructor(private readonly leavesService: LeavesService) {}
                        //leave policy Endpoints
   @Post('policy')
-  // @UseGuards(RolesGuard) 
-  // @Roles('HR Admin')
+  @UseGuards(RolesGuard) 
+  @Roles(SystemRole.HR_ADMIN, SystemRole.LEGAL_POLICY_ADMIN)
   async createLeavePolicy(@Body() createLeavePolicyDto: CreateLeavePolicyDto) {
     return await this.leavesService.createLeavePolicy(createLeavePolicyDto);
   }
 
   @Get('policies')
-  // @UseGuards(RolesGuard)
-  // @Roles('HR Admin')
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.HR_ADMIN, SystemRole.HR_MANAGER, SystemRole.HR_EMPLOYEE)
   async getLeavePolicies() {
     return await this.leavesService.getLeavePolicies();
   }
 
   @Get('policy/:id')
-  // @UseGuards(RolesGuard)
-  // @Roles('HR Admin')
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.HR_ADMIN, SystemRole.HR_MANAGER, SystemRole.HR_EMPLOYEE)
   async getLeavePolicyById(@Param('id') id: string) {
     return await this.leavesService.getLeavePolicyById(id);
   }
 
   @Put('policy/:id')
-  // @UseGuards(RolesGuard)
-  // @Roles('HR Admin')
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.HR_ADMIN, SystemRole.LEGAL_POLICY_ADMIN)
   async updateLeavePolicy(
     @Param('id') id: string,
     @Body() updateLeavePolicyDto: UpdateLeavePolicyDto
@@ -82,8 +83,8 @@ export class LeaveController {
   }
 
   @Delete('policy/:id')
-  // @UseGuards(RolesGuard)
-  // @Roles('HR Admin')
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.HR_ADMIN, SystemRole.LEGAL_POLICY_ADMIN)
   async deleteLeavePolicy(@Param('id') id: string) {
     return await this.leavesService.deleteLeavePolicy(id);
   }
@@ -91,22 +92,22 @@ export class LeaveController {
                           // Leave Request Endpoints
 
   @Post('request')
-  //@UseGuards(JwtAuthGuard)  // Only authenticated users can submit a request
-  // @Roles('Employee')
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.DEPARTMENT_EMPLOYEE, SystemRole.DEPARTMENT_HEAD)
   async createLeaveRequest(@Body() createLeaveRequestDto: CreateLeaveRequestDto) {
     return await this.leavesService.createLeaveRequest(createLeaveRequestDto);
   }
 
   @Get('request/:id')
-  // @UseGuards(RolesGuard)
-  // @Roles('Employee', 'HR Admin', 'Manager')  // Employees, HR Admin, and Manager can view leave requests
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.DEPARTMENT_EMPLOYEE, SystemRole.HR_ADMIN, SystemRole.DEPARTMENT_HEAD, SystemRole.HR_MANAGER)
   async getLeaveRequestById(@Param('id') id: string) {
     return await this.leavesService.getLeaveRequestById(id);
   }
 
   @Put('request/:id')
-  // @UseGuards( RolesGuard)
-  // @Roles('Employee', 'HR Admin', 'Manager')  // Employee can update their own request, HR Admin and Manager can update any
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.DEPARTMENT_EMPLOYEE, SystemRole.HR_ADMIN, SystemRole.DEPARTMENT_HEAD)
   async updateLeaveRequest(
     @Param('id') id: string,
     @Body() updateLeaveRequestDto: UpdateLeaveRequestDto
@@ -115,23 +116,23 @@ export class LeaveController {
   }
 
   @Delete('request/:id')
-  // @UseGuards(RolesGuard)
-  // @Roles('Employee', 'HR Admin')  // Employees can delete their own leave requests, HR Admin can delete any
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.DEPARTMENT_EMPLOYEE, SystemRole.HR_ADMIN)
   async deleteLeaveRequest(@Param('id') id: string) {
     return await this.leavesService.deleteLeaveRequest(id);
   }
 
   // Leave Entitlement Endpoints
   @Post('entitlement')
-  // @UseGuards(RolesGuard)
-  // @Roles('HR Admin')  // Only HR Admin can create leave entitlement
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.HR_ADMIN)
   async createLeaveEntitlement(@Body() createLeaveEntitlementDto: CreateLeaveEntitlementDto) {
     return await this.leavesService.createLeaveEntitlement(createLeaveEntitlementDto);
   }
 
   @Get('entitlement/:employeeId/:leaveTypeId')
-  // @UseGuards(RolesGuard)
-  // @Roles('HR Admin', 'Manager')  // HR Admin and Manager can view entitlements
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.HR_ADMIN, SystemRole.HR_MANAGER, SystemRole.DEPARTMENT_HEAD)
   async getLeaveEntitlement(
     @Param('employeeId') employeeId: string,
     @Param('leaveTypeId') leaveTypeId: string
@@ -140,8 +141,8 @@ export class LeaveController {
   }
 
   @Put('entitlement/:id')
-  // @UseGuards(RolesGuard)
-  // @Roles('HR Admin')  // Only HR Admin can update leave entitlement
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.HR_ADMIN)
   async updateLeaveEntitlement(
     @Param('id') id: string,
     @Body() updateLeaveEntitlementDto: UpdateLeaveEntitlementDto
@@ -151,43 +152,43 @@ export class LeaveController {
 
   // Leave Adjustment Endpoints
   @Post('adjustment')
-  // @UseGuards(RolesGuard)
-  // @Roles('HR Admin')  // Only HR Admin can create leave adjustments
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.HR_ADMIN)
   async createLeaveAdjustment(@Body() createLeaveAdjustmentDto: CreateLeaveAdjustmentDto) {
     return await this.leavesService.createLeaveAdjustment(createLeaveAdjustmentDto);
   }
 
   @Get('adjustment/:employeeId')
-  // @UseGuards(RolesGuard)
-  // @Roles('HR Admin', 'Manager')  // HR Admin and Manager can view leave adjustments
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.HR_ADMIN, SystemRole.HR_MANAGER, SystemRole.DEPARTMENT_HEAD)
   async getLeaveAdjustments(@Param('employeeId') employeeId: string) {
     return await this.leavesService.getLeaveAdjustments(employeeId);
   }
 
   @Delete('adjustment/:id')
-  // @UseGuards(RolesGuard)
-  // @Roles('HR Admin')  // Only HR Admin can delete leave adjustments
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.HR_ADMIN)
   async deleteLeaveAdjustment(@Param('id') id: string) {
     return await this.leavesService.deleteLeaveAdjustment(id);
   }
 
   // Leave Type Endpoints
   @Post('category')
-  // @UseGuards(RolesGuard)
-  // @Roles('HR Admin')  // Only HR Admin can create leave categories
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.HR_ADMIN, SystemRole.LEGAL_POLICY_ADMIN)
   async createLeaveCategory(@Body() createLeaveCategoryDto: CreateLeaveCategoryDto) {
     return await this.leavesService.createLeaveCategory(createLeaveCategoryDto);
   }
   @Post('type')
-  // @UseGuards(RolesGuard)
-  // @Roles('HR Admin')  // Only HR Admin can create leave types
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.HR_ADMIN, SystemRole.LEGAL_POLICY_ADMIN)
   async createLeaveType(@Body() createLeaveTypeDto: CreateLeaveTypeDto) {
     return await this.leavesService.createLeaveType(createLeaveTypeDto);
   }
 
   @Put('type/:id')
-  // @UseGuards(RolesGuard)
-  // @Roles('HR Admin')  // Only HR Admin can update leave types
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.HR_ADMIN, SystemRole.LEGAL_POLICY_ADMIN)
   async updateLeaveType(
     @Param('id') id: string,
     @Body() updateLeaveTypeDto: UpdateLeaveTypeDto
@@ -198,8 +199,8 @@ export class LeaveController {
   // Phase 2: Leave Request Approval Endpoints
 
   @Post('request/:id/approve')
-  // @UseGuards(RolesGuard)
-  // @Roles('Manager', 'Department Head')
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.DEPARTMENT_HEAD, SystemRole.HR_MANAGER, SystemRole.HR_ADMIN)
   async approveLeaveRequest(
     @Param('id') id: string,
     @Body() approveLeaveRequestDto: ApproveLeaveRequestDto,
@@ -209,8 +210,8 @@ export class LeaveController {
   }
 
   @Post('request/:id/reject')
-  // @UseGuards(RolesGuard)
-  // @Roles('Manager', 'Department Head')
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.DEPARTMENT_HEAD, SystemRole.HR_MANAGER, SystemRole.HR_ADMIN)
   async rejectLeaveRequest(
     @Param('id') id: string,
     @Body() rejectLeaveRequestDto: RejectLeaveRequestDto,
@@ -219,9 +220,9 @@ export class LeaveController {
     return await this.leavesService.rejectLeaveRequest(rejectLeaveRequestDto, req.user);
   }
 
-  // @Get('request/manager/:managerId/pending')
+  // @Get('pending/:managerId')
   // @UseGuards(RolesGuard)
-  // @Roles('Manager', 'Department Head')
+  // @Roles(SystemRole.DEPARTMENT_HEAD, SystemRole.HR_MANAGER, SystemRole.HR_ADMIN)
   // async getPendingRequestsForManager(@Param('managerId') managerId: string) {
   //   return await this.leavesService.getPendingRequestsForManager(managerId);
   // }
@@ -229,15 +230,15 @@ export class LeaveController {
   // Phase 2: HR Manager Endpoints
 
   @Post('request/finalize')
-  // @UseGuards(RolesGuard)
-  // @Roles('HR Manager')
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.HR_MANAGER, SystemRole.HR_ADMIN)
   async finalizeLeaveRequest(@Body() finalizeDto: FinalizeLeaveRequestDto) {
     return await this.leavesService.finalizeLeaveRequest(finalizeDto.leaveRequestId, finalizeDto.hrUserId);
   }
 
   @Post('request/override')
-  // @UseGuards(RolesGuard)
-  // @Roles('HR Manager')
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.HR_MANAGER, SystemRole.HR_ADMIN)
   async hrOverrideDecision(@Body() overrideDto: HrOverrideDecisionDto) {
     return await this.leavesService.hrOverrideDecision(
       overrideDto.leaveRequestId,
@@ -248,8 +249,8 @@ export class LeaveController {
   }
 
   @Post('request/process-multiple')
-  //@UseGuards(RolesGuard)
-  //@Roles('HR Manager')
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.HR_MANAGER, SystemRole.HR_ADMIN)
   async processMultipleLeaveRequests(@Body() processDto: ProcessMultipleRequestsDto) {
     return await this.leavesService.processMultipleLeaveRequests(
       processDto.leaveRequestIds,
@@ -261,8 +262,8 @@ export class LeaveController {
   // Phase 2: Employee Endpoints
 
   @Get('balance/:employeeId')
- // @UseGuards(RolesGuard)
-  //@Roles('Employee', 'Manager', 'HR Manager')
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.DEPARTMENT_EMPLOYEE, SystemRole.DEPARTMENT_HEAD, SystemRole.HR_MANAGER, SystemRole.HR_ADMIN)
   async getEmployeeLeaveBalance(
     @Param('employeeId') employeeId: string,
     @Query('leaveTypeId') leaveTypeId?: string
@@ -271,14 +272,16 @@ export class LeaveController {
   }
 
   @Post('request/:id/cancel')
-  //@UseGuards(RolesGuard)
-  //@Roles('Employee')
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.DEPARTMENT_EMPLOYEE, SystemRole.HR_ADMIN)
   async cancelLeaveRequest(@Param('id') id: string) {
     return await this.leavesService.cancelLeaveRequest(id);
   }
 
   // REQ-031: Get detailed leave balance
   @Get('balance-details/:employeeId')
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.DEPARTMENT_EMPLOYEE, SystemRole.DEPARTMENT_HEAD, SystemRole.HR_MANAGER, SystemRole.HR_ADMIN)
   async getLeaveBalanceDetails(
     @Param('employeeId') employeeId: string,
     @Query('leaveTypeId') leaveTypeId?: string
@@ -288,6 +291,8 @@ export class LeaveController {
 
   // REQ-032: Get past leave requests
   @Get('past-requests/:employeeId')
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.DEPARTMENT_EMPLOYEE, SystemRole.DEPARTMENT_HEAD, SystemRole.HR_MANAGER, SystemRole.HR_ADMIN)
   async getPastLeaveRequests(
     @Param('employeeId') employeeId: string,
     @Query('fromDate') fromDate?: string,
@@ -305,12 +310,16 @@ export class LeaveController {
 
   // REQ-033: Filter leave history
   @Post('filter-history')
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.DEPARTMENT_EMPLOYEE, SystemRole.DEPARTMENT_HEAD, SystemRole.HR_MANAGER, SystemRole.HR_ADMIN)
   async filterLeaveHistory(@Body() filterDto: FilterLeaveHistoryDto) {
     return await this.leavesService.filterLeaveHistory(filterDto.employeeId, filterDto);
   }
 
   // REQ-034: View team leave balances and upcoming leaves
   @Get('team-balances/:managerId')
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.DEPARTMENT_HEAD, SystemRole.HR_MANAGER, SystemRole.HR_ADMIN)
   async getTeamLeaveBalances(
     @Param('managerId') managerId: string,
     @Query('upcomingFromDate') upcomingFromDate?: string,
@@ -327,12 +336,16 @@ export class LeaveController {
 
   // REQ-035: Filter team leave data
   @Post('filter-team-data')
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.DEPARTMENT_HEAD, SystemRole.HR_MANAGER, SystemRole.HR_ADMIN)
   async filterTeamLeaveData(@Body() filterDto: FilterTeamLeaveDataDto) {
     return await this.leavesService.filterTeamLeaveData(filterDto.managerId, filterDto);
   }
 
   // REQ-039: Flag irregular pattern
   @Post('flag-irregular-pattern')
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.DEPARTMENT_HEAD, SystemRole.HR_MANAGER, SystemRole.HR_ADMIN)
   async flagIrregularPattern(@Body() flagDto: FlagIrregularPatternDto) {
     return await this.leavesService.flagIrregularPattern(
       flagDto.leaveRequestId,
@@ -344,6 +357,8 @@ export class LeaveController {
 
   // REQ-040: Auto accrue leave for single employee
   @Post('auto-accrue')
+  // @UseGuards(RolesGuard)
+  // @Roles(SystemRole.HR_ADMIN, SystemRole.HR_MANAGER, SystemRole.PAYROLL_SPECIALIST)
   async autoAccrueLeave(@Body() accrueDto: AutoAccrueLeaveDto) {
     return await this.leavesService.autoAccrueLeave(
       accrueDto.employeeId,
@@ -357,6 +372,8 @@ export class LeaveController {
 
   // REQ-040: Auto accrue leave for all employees
   @Post('auto-accrue-all')
+  // @UseGuards(RolesGuard)
+  // @Roles(SystemRole.HR_ADMIN, SystemRole.HR_MANAGER, SystemRole.PAYROLL_SPECIALIST)
   async autoAccrueAllEmployees(@Body() accrueAllDto: AccrueAllEmployeesDto) {
     return await this.leavesService.autoAccrueAllEmployees(
       accrueAllDto.leaveTypeId,
@@ -368,6 +385,8 @@ export class LeaveController {
 
   // REQ-041: Run carry-forward
   @Post('carry-forward')
+  // @UseGuards(RolesGuard)
+  // @Roles(SystemRole.HR_ADMIN, SystemRole.HR_MANAGER, SystemRole.PAYROLL_SPECIALIST)
   async runCarryForward(@Body() carryForwardDto: RunCarryForwardDto) {
     return await this.leavesService.runCarryForward(
       carryForwardDto.leaveTypeId,
@@ -379,6 +398,8 @@ export class LeaveController {
 
   // REQ-042: Adjust accruals
   @Post('adjust-accrual')
+  // @UseGuards(RolesGuard)
+  // @Roles(SystemRole.HR_ADMIN, SystemRole.HR_MANAGER, SystemRole.PAYROLL_SPECIALIST)
   async adjustAccrual(@Body() adjustmentDto: AccrualAdjustmentDto) {
     return await this.leavesService.adjustAccrual(
       adjustmentDto.employeeId,
@@ -394,6 +415,8 @@ export class LeaveController {
 
   // REQ-043: Sync with payroll
   @Post('sync-payroll')
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.HR_ADMIN, SystemRole.HR_MANAGER, SystemRole.PAYROLL_SPECIALIST)
   async syncWithPayroll(@Body() syncDto: SyncWithPayrollDto) {
     return await this.leavesService.syncWithPayroll(
       syncDto.leaveRequestId,
@@ -407,7 +430,7 @@ export class LeaveController {
   // Phase 2: REQ-023 - Delegate approval authority
   // @Post('delegate')
   // @UseGuards(RolesGuard)
-  // @Roles('Manager', 'Department Head')
+  // @Roles(SystemRole.DEPARTMENT_HEAD, SystemRole.HR_MANAGER)
   // async delegateApprovalAuthority(@Body() delegateDto: DelegateApprovalDto) {
   //   return await this.leavesService.delegateApprovalAuthority(
   //     delegateDto.managerId,
