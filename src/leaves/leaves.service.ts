@@ -1362,108 +1362,145 @@ async updateLeaveType(
     }
 
     // REQ-040: Auto accrue for all employees
-    async autoAccrueAllEmployees(leaveTypeId: string, accrualAmount: number, accrualType: string, departmentId?: string): Promise<any> {
+async autoAccrueAllEmployees(
+  leaveTypeId: string,
+  accrualAmount: number,
+  accrualType: string,
+  departmentId?: string,
+): Promise<any> {
+  try {
+    const query: any = { leaveTypeId: new Types.ObjectId(leaveTypeId) };
+
+    // TODO: if you later store department on entitlement or employee, you can
+    // use departmentId here to further filter the query.
+
+    const entitlements = await this.leaveEntitlementModel.find(query).exec();
+
+    const results: any[] = [];
+    let successful = 0;
+    let failed = 0;
+
+    for (const entitlement of entitlements) {
       try {
-        const query: any = { leaveTypeId: new Types.ObjectId(leaveTypeId) };
-        const entitlements = await this.leaveEntitlementModel.find(query).exec();
+        const previousBalance = entitlement.remaining;
 
-        const results: any[] = [];
-        let successful = 0;
-        let failed = 0;
+        // Atomically increment accruedActual & remaining, and update lastAccrualDate
+        const updated = await this.leaveEntitlementModel
+          .findByIdAndUpdate(
+            entitlement._id,
+            {
+              $inc: {
+                accruedActual: accrualAmount,
+                remaining: accrualAmount,
+              },
+              $set: {
+                lastAccrualDate: new Date(),
+              },
+            },
+            { new: true },
+          )
+          .exec();
 
-        for (const entitlement of entitlements) {
-          try {
-            const previousBalance = entitlement.remaining;
-            await this.leaveEntitlementModel.findByIdAndUpdate(
-              entitlement._id,
-              { $inc: { accruedActual: accrualAmount, remaining: accrualAmount }, $set: { lastAccrualDate: new Date() } },
-              { new: true }
-            ).exec();
-
-            results.push({
-              employeeId: entitlement.employeeId,
-              status: 'success',
-              previousBalance,
-              newBalance: entitlement.remaining + accrualAmount,
-              accrualAmount,
-            });
-            successful++;
-          } catch (err) {
-            failed++;
-            results.push({
-              employeeId: entitlement.employeeId,
-              status: 'failed',
-              error: (err as any).message,
-            });
-          }
-        }
-
-        return {
-          successful,
-          failed,
-          total: entitlements.length,
-          details: results,
-        };
-      } catch (error) {
-        throw new Error(`Failed to accrue leave for all employees: ${(error as any).message}`);
+        results.push({
+          employeeId: entitlement.employeeId,
+          status: 'success',
+          previousBalance,
+          newBalance: updated?.remaining, // ✅ actual stored value after update
+          accrualAmount,
+          accrualType,
+        });
+        successful++;
+      } catch (err) {
+        failed++;
+        results.push({
+          employeeId: entitlement.employeeId,
+          status: 'failed',
+          error: (err as any).message,
+        });
       }
     }
+
+    return {
+      successful,
+      failed,
+      total: entitlements.length,
+      details: results,
+    };
+  } catch (error) {
+    throw new Error(`Failed to accrue leave for all employees: ${(error as any).message}`);
+  }
+}
+
 
     // REQ-041: Run carry-forward
-    async runCarryForward(leaveTypeId: string, employeeId?: string, asOfDate?: Date, departmentId?: string): Promise<any> {
+async runCarryForward(
+  leaveTypeId: string,
+  employeeId?: string,
+  asOfDate?: Date,
+  departmentId?: string,
+): Promise<any> {
+  try {
+    const processDate = asOfDate || new Date();
+
+    const query: any = { leaveTypeId: new Types.ObjectId(leaveTypeId) };
+
+    if (employeeId) {
+      query.employeeId = new Types.ObjectId(employeeId);
+    }
+    // departmentId is currently not used in filtering; you can add it later if needed
+
+    const entitlements = await this.leaveEntitlementModel.find(query).exec();
+    const results: any[] = [];
+    let successful = 0;
+    let failed = 0;
+
+    for (const entitlement of entitlements) {
       try {
-        const processDate = asOfDate || new Date();
-        const query: any = { leaveTypeId: new Types.ObjectId(leaveTypeId) };
+        const carryForwardAmount = Math.min(entitlement.remaining, 10); // Max 10 days carry forward
 
-        if (employeeId) {
-          query.employeeId = new Types.ObjectId(employeeId);
-        }
+        // Atomically set carryForward and decrement remaining, and get updated doc back
+        const updated = await this.leaveEntitlementModel
+          .findByIdAndUpdate(
+            entitlement._id,
+            {
+              $set: { carryForward: carryForwardAmount },
+              $inc: { remaining: -carryForwardAmount },
+            },
+            { new: true },
+          )
+          .exec();
 
-        const entitlements = await this.leaveEntitlementModel.find(query).exec();
-        const results: any[] = [];
-        let successful = 0;
-        let failed = 0;
-
-        for (const entitlement of entitlements) {
-          try {
-            const carryForwardAmount = Math.min(entitlement.remaining, 10); // Max 10 days carry forward
-            // Atomically set carryForward and decrement remaining
-            await this.leaveEntitlementModel.findByIdAndUpdate(
-              entitlement._id,
-              { $set: { carryForward: carryForwardAmount }, $inc: { remaining: -carryForwardAmount } },
-              { new: true }
-            ).exec();
-
-            results.push({
-              employeeId: entitlement.employeeId,
-              status: 'success',
-              carryForwardAmount,
-              expiringAmount: 0,
-              newBalance: entitlement.remaining,
-            });
-            successful++;
-          } catch (err) {
-            failed++;
-            results.push({
-              employeeId: entitlement.employeeId,
-              status: 'failed',
-              error: (err as any).message,
-            });
-          }
-        }
-
-        return {
-          processedDate: processDate,
-          leaveTypeId,
-          successful,
-          failed,
-          total: entitlements.length,
-          details: results,
-        };
-      } catch (error) {
-        throw new Error(`Failed to run carry-forward: ${(error as any).message}`);
+        results.push({
+          employeeId: entitlement.employeeId,
+          status: 'success',
+          carryForwardAmount,
+          expiringAmount: 0,        // you can change this later if you track expired days
+          newBalance: updated?.remaining, // ✅ actual updated remaining from DB
+        });
+        successful++;
+      } catch (err) {
+        failed++;
+        results.push({
+          employeeId: entitlement.employeeId,
+          status: 'failed',
+          error: (err as any).message,
+        });
       }
     }
+
+    return {
+      processedDate: processDate,
+      leaveTypeId,
+      successful,
+      failed,
+      total: entitlements.length,
+      details: results,
+    };
+  } catch (error) {
+    throw new Error(`Failed to run carry-forward: ${(error as any).message}`);
+  }
+}
+
 
 // REQ-042: Adjust accruals during unpaid leave or long absence
 async adjustAccrual(employeeId: string,leaveTypeId: string,adjustmentType: string,adjustmentAmount: number,fromDate: Date,toDate?: Date,reason?: string,notes?: string,): Promise<any> {

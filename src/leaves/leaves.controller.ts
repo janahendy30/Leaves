@@ -52,8 +52,8 @@ export class LeaveController {
   constructor(private readonly leavesService: LeavesService) {}
                        //leave policy Endpoints
   @Post('policy')
-  @UseGuards(RolesGuard) 
-  @Roles(SystemRole.HR_ADMIN, SystemRole.LEGAL_POLICY_ADMIN)
+  //@UseGuards(RolesGuard) 
+  //@Roles(SystemRole.HR_ADMIN, SystemRole.LEGAL_POLICY_ADMIN)
   async createLeavePolicy(@Body() createLeavePolicyDto: CreateLeavePolicyDto) {
     return await this.leavesService.createLeavePolicy(createLeavePolicyDto);
   }
