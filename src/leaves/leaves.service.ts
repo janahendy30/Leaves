@@ -39,6 +39,7 @@ import { LeaveStatus } from './enums/leave-status.enum';
 
 
 import { AccrualMethod } from './enums/accrual-method.enum';
+import { RoundingRule } from './enums/rounding-rule.enum';
 import { ApproveLeaveRequestDto } from './dto/ApproveLeaveRequest.dto';
 import { RejectLeaveRequestDto } from './dto/RejectLeaveRequest.dto';
 import { ViewLeaveBalanceDto } from './dto/ViewLeaveBalance.dto';
@@ -283,13 +284,17 @@ async isBlockedDateRange(from: string, to: string): Promise<boolean> {
 
     // Phase 2: REQ-015 - Create leave request with validation and routing
     async createLeaveRequest(createLeaveRequestDto: CreateLeaveRequestDto): Promise<LeaveRequestDocument> {
-        const { dates, employeeId, leaveTypeId, justification, attachmentId, durationDays } = createLeaveRequestDto;
+        const { dates, employeeId, leaveTypeId, justification, attachmentId, durationDays: providedDurationDays } = createLeaveRequestDto;
         const { from, to } = dates;
 
         const startDate = new Date(from);
         const endDate = new Date(to);
         const today = new Date();
         today.setHours(0, 0, 0, 0);
+
+        // Business Rule: Calculate leave duration net of non-working days (weekends and holidays)
+        const calculatedDurationDays = await this.calculateWorkingDays(startDate, endDate, employeeId);
+        const durationDays = providedDurationDays || calculatedDurationDays;
 
         // REQ-031: Check post-leave grace period
         const maxGracePeriodDays = 7; // Should come from configuration
@@ -665,32 +670,84 @@ async calculateAccrual(employeeId: string, leaveTypeId: string, accrualMethod: A
     throw new Error(`Leave entitlement for employee ${employeeId} with leave type ${leaveTypeId} not found`);
   }
 
+  // Get leave policy for rounding rule and monthly rate
+  const leavePolicy = await this.leavePolicyModel.findOne({ leaveTypeId }).exec();
+  if (!leavePolicy) {
+    throw new Error(`Leave policy for leave type ${leaveTypeId} not found`);
+  }
+
+  // Get employee profile for hire date
+  const employeeProfile = await this.employeeProfileModel.findById(employeeId).exec();
+  if (!employeeProfile) {
+    throw new Error(`Employee ${employeeId} not found`);
+  }
+
   let accrualAmount = 0;
 
   switch (accrualMethod) {
     case AccrualMethod.MONTHLY:
-      accrualAmount = leaveEntitlement.yearlyEntitlement / 12;  // Accrue monthly
+      // Business Rule: Monthly accrual = (Number of eligible months worked) × (Monthly Rate)
+      const hireDate = new Date(employeeProfile.dateOfHire);
+      const today = new Date();
+      const monthsWorked = this.calculateMonthsWorked(hireDate, today);
+      accrualAmount = monthsWorked * leavePolicy.monthlyRate;
       break;
     case AccrualMethod.YEARLY:
-      accrualAmount = leaveEntitlement.yearlyEntitlement;  // Accrue annually
+      accrualAmount = leavePolicy.yearlyRate || leaveEntitlement.yearlyEntitlement;
       break;
     case AccrualMethod.PER_TERM:
-      accrualAmount = leaveEntitlement.yearlyEntitlement / 4;  // Accrue per term (e.g., quarterly)
+      accrualAmount = (leavePolicy.yearlyRate || leaveEntitlement.yearlyEntitlement) / 4;
       break;
     default:
       throw new Error('Invalid accrual method');
   }
-  // Apply accrual atomically: increment accruedActual and remaining accordingly
+
+  // Apply rounding rule
+  const roundedAmount = this.applyRoundingRule(accrualAmount, leavePolicy.roundingRule);
+
+  // Calculate the increment for accruedRounded (difference between new and old rounded)
+  const currentRounded = leaveEntitlement.accruedRounded || 0;
+  const newRounded = currentRounded + roundedAmount;
+  const roundedIncrement = roundedAmount;
+
+  // Update both accruedActual (pre-rounded) and accruedRounded (rounded)
   await this.leaveEntitlementModel.findByIdAndUpdate(
     leaveEntitlement._id,
     {
-      $inc: { accruedActual: accrualAmount, remaining: accrualAmount },
+      $inc: { 
+        accruedActual: accrualAmount,
+        accruedRounded: roundedIncrement,
+        remaining: roundedIncrement 
+      },
       $set: { lastAccrualDate: new Date() },
     },
     { new: true }
   ).exec();
 
-  console.log(`Leave entitlement for employee ${employeeId} updated. New balance: ${leaveEntitlement.remaining}`);
+  console.log(`Leave entitlement for employee ${employeeId} updated. Actual: ${accrualAmount}, Rounded: ${roundedAmount}`);
+}
+
+// Helper: Calculate months worked
+private calculateMonthsWorked(hireDate: Date, currentDate: Date): number {
+  const years = currentDate.getFullYear() - hireDate.getFullYear();
+  const months = currentDate.getMonth() - hireDate.getMonth();
+  return years * 12 + months + (currentDate.getDate() >= hireDate.getDate() ? 0 : -1);
+}
+
+// Helper: Apply rounding rule
+private applyRoundingRule(amount: number, roundingRule: RoundingRule): number {
+  switch (roundingRule) {
+    case RoundingRule.NONE:
+      return amount;
+    case RoundingRule.ROUND:
+      return Math.round(amount);
+    case RoundingRule.ROUND_UP:
+      return Math.ceil(amount);
+    case RoundingRule.ROUND_DOWN:
+      return Math.floor(amount);
+    default:
+      return amount;
+  }
 }
  
 
@@ -716,25 +773,51 @@ async assignPersonalizedEntitlement(
 }
 
 
-  async resetLeaveBalancesForNewYear(): Promise<void> {
-  const currentYear = new Date().getFullYear(); 
-  const leaveEntitlements: LeaveEntitlementDocument[] = await this.leaveEntitlementModel.find({}).exec();
-leaveEntitlements.forEach(async (entitlement: LeaveEntitlementDocument) => {
-    const lastAccrualDate = entitlement.lastAccrualDate ? new Date(entitlement.lastAccrualDate) : new Date();  
-     const lastAccrualYear = lastAccrualDate.getFullYear();  
-    if (lastAccrualYear !== currentYear) {
-      entitlement.remaining = entitlement.yearlyEntitlement - entitlement.taken; //remaining leave balance  
-      entitlement.lastAccrualDate = new Date();  
-      if (entitlement.carryForward > 0) {
-        entitlement.remaining += entitlement.carryForward;
+  // Business Rule: Reset leave balances based on criterion date (Hire date, First Vacation Date, etc.)
+  async resetLeaveBalancesForNewYear(criterion: 'HIRE_DATE' | 'FIRST_VACATION_DATE' | 'REVISED_HIRE_DATE' | 'WORK_RECEIVING_DATE' = 'HIRE_DATE'): Promise<void> {
+    const leaveEntitlements: LeaveEntitlementDocument[] = await this.leaveEntitlementModel.find({}).exec();
+    
+    for (const entitlement of leaveEntitlements) {
+      try {
+        // Calculate reset date based on criterion
+        const resetDate = await this.calculateResetDate(
+          entitlement.employeeId.toString(),
+          criterion,
+          entitlement.leaveTypeId.toString()
+        );
+        
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const resetDateOnly = new Date(resetDate);
+        resetDateOnly.setHours(0, 0, 0, 0);
+
+        // Check if reset date has passed
+        if (resetDateOnly <= today) {
+          // Reset remaining balance
+          let newRemaining = entitlement.yearlyEntitlement - entitlement.taken;
+          
+          // Add carry forward if allowed
+          const leavePolicy = await this.leavePolicyModel.findOne({ leaveTypeId: entitlement.leaveTypeId }).exec();
+          if (leavePolicy?.carryForwardAllowed && entitlement.carryForward > 0) {
+            newRemaining += entitlement.carryForward;
+          }
+
+          // Calculate next reset date (one year from current reset date)
+          const nextReset = new Date(resetDate);
+          nextReset.setFullYear(nextReset.getFullYear() + 1);
+
+          await this.updateLeaveEntitlement(entitlement._id.toString(), {
+            remaining: newRemaining,
+            lastAccrualDate: new Date(),
+            nextResetDate: nextReset
+          });
+        }
+      } catch (error) {
+        console.error(`Error resetting balance for entitlement ${entitlement._id}:`, error);
+        // Continue with next entitlement
       }
-      await this.updateLeaveEntitlement(entitlement._id.toString(), {
-        remaining: entitlement.remaining,
-        lastAccrualDate: entitlement.lastAccrualDate
-      });
     }
-  });
-}
+  }
 
 
 
@@ -906,33 +989,51 @@ async updateLeaveType(
     }
 
 
-    // Phase 2: BR 41 - Check cumulative limits (e.g., max sick leave per year)
+    // Phase 2: BR 41 - Check cumulative limits (e.g., max sick leave per year and 3-year cycle)
     private async checkCumulativeLimits(employeeId: string, leaveTypeId: string, requestedDays: number): Promise<void> {
-      const leaveType = await this.leaveTypeModel.findById(leaveTypeId).exec();
-      if (!leaveType) {
-        return;
-      }
-
-      // Check max sick leave per year
-      if (leaveType.code === 'SICK_LEAVE') {
-        const currentYear = new Date().getFullYear();
-        const yearStart = new Date(currentYear, 0, 1);
-        const yearEnd = new Date(currentYear, 11, 31);
-
-        const approvedSickLeaves = await this.leaveRequestModel.find({
-          employeeId: new Types.ObjectId(employeeId),
-          leaveTypeId: new Types.ObjectId(leaveTypeId),
-          status: LeaveStatus.APPROVED,
-          'dates.from': { $gte: yearStart, $lte: yearEnd },
-        }).exec();
-
-        const totalSickLeaveDays = approvedSickLeaves.reduce((sum, req) => sum + req.durationDays, 0);
-        const maxSickLeavePerYear = 30; // Should come from policy configuration
-
-        if (totalSickLeaveDays + requestedDays > maxSickLeavePerYear) {
-          throw new Error(`Cumulative sick leave limit exceeded. Maximum ${maxSickLeavePerYear} days per year allowed.`);
+        const leaveType = await this.leaveTypeModel.findById(leaveTypeId).exec();
+        if (!leaveType) {
+            return;
         }
-      }
+
+        // Business Rule: Sick leave must track cumulatively over a 3-year cycle (max 360 days)
+        if (leaveType.code === 'SICK_LEAVE') {
+            const today = new Date();
+            const threeYearsAgo = new Date(today);
+            threeYearsAgo.setFullYear(today.getFullYear() - 3);
+
+            // Get all approved sick leaves in the last 3 years
+            const approvedSickLeaves = await this.leaveRequestModel.find({
+                employeeId: new Types.ObjectId(employeeId),
+                leaveTypeId: new Types.ObjectId(leaveTypeId),
+                status: LeaveStatus.APPROVED,
+                'dates.from': { $gte: threeYearsAgo },
+            }).exec();
+
+            const totalSickLeaveDays = approvedSickLeaves.reduce((sum, req) => sum + req.durationDays, 0);
+            const maxSickLeaveThreeYears = 360; // Business rule: max 360 days over 3-year cycle
+
+            if (totalSickLeaveDays + requestedDays > maxSickLeaveThreeYears) {
+                throw new Error(`Cumulative sick leave limit exceeded. Maximum ${maxSickLeaveThreeYears} days allowed over a 3-year cycle.`);
+            }
+
+            // Also check per year limit (30 days)
+            const currentYear = new Date().getFullYear();
+            const yearStart = new Date(currentYear, 0, 1);
+            const yearEnd = new Date(currentYear, 11, 31);
+
+            const yearSickLeaves = approvedSickLeaves.filter(req => {
+                const reqDate = new Date(req.dates.from);
+                return reqDate >= yearStart && reqDate <= yearEnd;
+            });
+
+            const yearSickLeaveDays = yearSickLeaves.reduce((sum, req) => sum + req.durationDays, 0);
+            const maxSickLeavePerYear = 30;
+
+            if (yearSickLeaveDays + requestedDays > maxSickLeavePerYear) {
+                throw new Error(`Annual sick leave limit exceeded. Maximum ${maxSickLeavePerYear} days per year allowed.`);
+            }
+        }
     }
 
 
@@ -1337,10 +1438,22 @@ async updateLeaveType(
           const entitlement = await this.getLeaveEntitlement(employeeId, leaveTypeId);
           const previousBalance = entitlement.remaining;
 
-          // Atomically increment accruedActual and remaining by the accrual amount
+          // Get policy for rounding rule
+          const leavePolicy = await this.leavePolicyModel.findOne({ leaveTypeId }).exec();
+          const roundingRule = leavePolicy?.roundingRule || RoundingRule.NONE;
+          const roundedAmount = this.applyRoundingRule(accrualAmount, roundingRule);
+
+          // Atomically increment both accruedActual (pre-rounded) and accruedRounded (rounded)
           const updated = await this.leaveEntitlementModel.findByIdAndUpdate(
             entitlement._id,
-            { $inc: { accruedActual: accrualAmount, remaining: accrualAmount }, $set: { lastAccrualDate: new Date() } },
+            { 
+              $inc: { 
+                accruedActual: accrualAmount,
+                accruedRounded: roundedAmount,
+                remaining: roundedAmount 
+              }, 
+              $set: { lastAccrualDate: new Date() } 
+            },
             { new: true }
           ).exec();
           if (updated) entitlement.remaining = updated.remaining;
@@ -1384,14 +1497,20 @@ async autoAccrueAllEmployees(
       try {
         const previousBalance = entitlement.remaining;
 
-        // Atomically increment accruedActual & remaining, and update lastAccrualDate
+        // Get policy for rounding rule
+        const leavePolicy = await this.leavePolicyModel.findOne({ leaveTypeId }).exec();
+        const roundingRule = leavePolicy?.roundingRule || RoundingRule.NONE;
+        const roundedAmount = this.applyRoundingRule(accrualAmount, roundingRule);
+
+        // Atomically increment both accruedActual (pre-rounded) and accruedRounded (rounded)
         const updated = await this.leaveEntitlementModel
           .findByIdAndUpdate(
             entitlement._id,
             {
               $inc: {
                 accruedActual: accrualAmount,
-                remaining: accrualAmount,
+                accruedRounded: roundedAmount,
+                remaining: roundedAmount,
               },
               $set: {
                 lastAccrualDate: new Date(),
@@ -1585,6 +1704,151 @@ async adjustAccrual(employeeId: string,leaveTypeId: string,adjustmentType: strin
         throw new Error(`Failed to sync with payroll: ${(error as any).message}`);
       }
     }
-   
+
+    // Business Rule: Calculate leave duration net of non-working days (weekends and holidays)
+    private async calculateWorkingDays(startDate: Date, endDate: Date, employeeId: string): Promise<number> {
+        let workingDays = 0;
+        const currentDate = new Date(startDate);
+        currentDate.setHours(0, 0, 0, 0);
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+
+        // Get calendar for the year
+        const year = currentDate.getFullYear();
+        const calendar = await this.calendarModel.findOne({ year }).populate('holidays').exec();
+
+        // Get holidays as date strings for quick lookup
+        const holidayDates = new Set<string>();
+        if (calendar && calendar.holidays) {
+            const HolidayModel = this.calendarModel.db.model('Holiday');
+            for (const holidayId of calendar.holidays) {
+                try {
+                    const holiday = await HolidayModel.findById(holidayId).exec();
+                    if (holiday && holiday.startDate) {
+                        const holidayDate = new Date(holiday.startDate);
+                        holidayDates.add(holidayDate.toISOString().split('T')[0]);
+                    }
+                } catch (err) {
+                    // Skip if holiday not found
+                }
+            }
+        }
+
+        // Check blocked periods
+        const blockedPeriods = calendar?.blockedPeriods || [];
+
+        while (currentDate <= end) {
+            const dayOfWeek = currentDate.getDay();
+            const dateString = currentDate.toISOString().split('T')[0];
+
+            // Skip weekends (Saturday = 6, Sunday = 0)
+            if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+                // Check if it's a holiday
+                const isHoliday = holidayDates.has(dateString);
+                
+                // Check if it's in a blocked period
+                const isBlocked = blockedPeriods.some(period => {
+                    const periodStart = new Date(period.from);
+                    const periodEnd = new Date(period.to);
+                    return currentDate >= periodStart && currentDate <= periodEnd;
+                });
+
+                // Count as working day if not holiday and not blocked
+                if (!isHoliday && !isBlocked) {
+                    workingDays++;
+                }
+            }
+
+            // Move to next day
+            currentDate.setDate(currentDate.getDate() + 1);
+        }
+
+        return workingDays;
+    }
+
+    // Business Rule: Track number of times employee has taken maternity leave
+    async getMaternityLeaveCount(employeeId: string): Promise<number> {
+        const maternityLeaveType = await this.leaveTypeModel.findOne({ code: 'MATERNITY_LEAVE' }).exec();
+        if (!maternityLeaveType) {
+            return 0;
+        }
+
+        const maternityLeaves = await this.leaveRequestModel.find({
+            employeeId: new Types.ObjectId(employeeId),
+            leaveTypeId: maternityLeaveType._id,
+            status: LeaveStatus.APPROVED,
+        }).exec();
+
+        return maternityLeaves.length;
+    }
+
+    // Business Rule: Calculate reset date based on criterion (Hire date, First Vacation Date, Revised Hire Date, Work Receiving Date)
+    async calculateResetDate(
+        employeeId: string,
+        criterion: 'HIRE_DATE' | 'FIRST_VACATION_DATE' | 'REVISED_HIRE_DATE' | 'WORK_RECEIVING_DATE',
+        leaveTypeId: string
+    ): Promise<Date> {
+        const employeeProfile = await this.employeeProfileModel.findById(employeeId).exec();
+        if (!employeeProfile) {
+            throw new Error(`Employee ${employeeId} not found`);
+        }
+
+        let baseDate: Date;
+
+        switch (criterion) {
+            case 'HIRE_DATE':
+                baseDate = new Date(employeeProfile.dateOfHire);
+                break;
+            case 'FIRST_VACATION_DATE':
+                // Get first approved leave request
+                const firstLeave = await this.leaveRequestModel.findOne({
+                    employeeId: new Types.ObjectId(employeeId),
+                    status: LeaveStatus.APPROVED,
+                }).sort({ 'dates.from': 1 }).exec();
+                baseDate = firstLeave ? new Date(firstLeave.dates.from) : new Date(employeeProfile.dateOfHire);
+                break;
+            case 'REVISED_HIRE_DATE':
+                // Use contractStartDate if available, otherwise hire date
+                baseDate = employeeProfile.contractStartDate 
+                    ? new Date(employeeProfile.contractStartDate)
+                    : new Date(employeeProfile.dateOfHire);
+                break;
+            case 'WORK_RECEIVING_DATE':
+                // Use contractStartDate as work receiving date
+                baseDate = employeeProfile.contractStartDate 
+                    ? new Date(employeeProfile.contractStartDate)
+                    : new Date(employeeProfile.dateOfHire);
+                break;
+            default:
+                baseDate = new Date(employeeProfile.dateOfHire);
+        }
+
+        // Calculate next reset date (one year from base date)
+        const nextResetDate = new Date(baseDate);
+        nextResetDate.setFullYear(nextResetDate.getFullYear() + 1);
+
+        // If next reset date has passed, calculate for current year
+        const today = new Date();
+        if (nextResetDate < today) {
+            const yearsSinceBase = today.getFullYear() - baseDate.getFullYear();
+            nextResetDate.setFullYear(baseDate.getFullYear() + yearsSinceBase + 1);
+        }
+
+        return nextResetDate;
+    }
+
+    // Business Rule: Update nextResetDate based on criterion
+    async updateResetDateForEmployee(
+        employeeId: string,
+        leaveTypeId: string,
+        criterion: 'HIRE_DATE' | 'FIRST_VACATION_DATE' | 'REVISED_HIRE_DATE' | 'WORK_RECEIVING_DATE'
+    ): Promise<void> {
+        const resetDate = await this.calculateResetDate(employeeId, criterion, leaveTypeId);
+        const entitlement = await this.getLeaveEntitlement(employeeId, leaveTypeId);
+        
+        await this.updateLeaveEntitlement(entitlement._id.toString(), {
+            nextResetDate: resetDate,
+        });
+    }
 
 }
