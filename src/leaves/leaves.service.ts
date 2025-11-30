@@ -51,12 +51,21 @@ import { FlagIrregularPatternDto } from './dto/FlagIrregularPattern.dto';
 import { AutoAccrueLeaveDto, AccrueAllEmployeesDto } from './dto/AutoAccrueLeave.dto';
 import { RunCarryForwardDto } from './dto/CarryForward.dto';
 import { AccrualAdjustmentDto } from './dto/AccrualAdjustment.dto';
-import { SyncWithPayrollDto } from './dto/SyncWithPayroll.dto';
 
 
 
 @Injectable()
 export class LeavesService {
+    // Helper: convert string or ObjectId-like to Types.ObjectId
+    private toObjectId(id: string | Types.ObjectId | undefined | null): Types.ObjectId | undefined {
+      if (!id) return undefined;
+      try {
+        return id instanceof Types.ObjectId ? id : new Types.ObjectId(id as string);
+      } catch (err) {
+        throw new Error(`Invalid id provided: ${id}`);
+      }
+    }
+
       // Calendar Management
       async createCalendar(dto: CreateCalendarDto): Promise<CalendarDocument> {
         // Normalize holidays: accept either array of ObjectId strings or embedded holiday objects
@@ -340,26 +349,59 @@ async isBlockedDateRange(from: string, to: string): Promise<boolean> {
           throw new BadRequestException('The requested leave dates fall on blocked periods.');
         }
 
-        // Validate balance and overlaps
-        const validationResult = await this.validateLeaveRequest(employeeId, leaveTypeId, startDate, endDate, durationDays);
-        if (!validationResult.isValid) {
-            throw new Error(validationResult.errorMessage);
+        
+
+        // Convert employeeId and leaveTypeId to ObjectId using the helper
+        const employeeObjectId = this.toObjectId(employeeId) as Types.ObjectId;
+        const leaveTypeObjectId = this.toObjectId(leaveTypeId) as Types.ObjectId;
+
+        // Fetch leave type using ObjectId
+        const leaveTypeDoc = await this.leaveTypeModel.findById(leaveTypeObjectId).exec();
+        if (!leaveTypeDoc) {
+          throw new Error('Leave type not found');
         }
 
-        // Create leave request with initial approval flow
+        // REQ-016 validations remain the same (use original attachmentId variable)
+        if (leaveTypeDoc.code === 'SICK_LEAVE' && durationDays > 1) {
+          if (!attachmentId) {
+            throw new Error('Medical certificate is required for sick leave exceeding one day.');
+          }
+        }
+
+        if (leaveTypeDoc.requiresAttachment && !attachmentId) {
+          throw new Error(`Attachment is required for ${leaveTypeDoc.name} leave requests.`);
+        }
+
+        if (attachmentId) {
+          const attachment = await this.attachmentModel.findById(this.toObjectId(attachmentId)).exec();
+          if (!attachment) {
+            throw new Error('Attachment not found');
+          }
+        }
+
+        // Validate balance and overlaps using ObjectIds (cast to any for existing helper)
+        const validationResult = await this.validateLeaveRequest(employeeObjectId as any, leaveTypeObjectId as any, startDate, endDate, durationDays);
+        if (!validationResult.isValid) {
+          throw new Error(validationResult.errorMessage);
+        }
+
+        // Create leave request with initial approval flow, ensuring ObjectId fields are set
         const leaveRequest = new this.leaveRequestModel({
-            ...createLeaveRequestDto,
-            status: LeaveStatus.PENDING,
-            approvalFlow: [{
-                role: 'Manager',
-                status: 'PENDING',
-                //decidedBy: lineManagerId,
-                decidedAt: undefined,
-            }],
+          ...createLeaveRequestDto,
+          employeeId: employeeObjectId,
+          leaveTypeId: leaveTypeObjectId,
+          attachmentId: createLeaveRequestDto.attachmentId ? this.toObjectId(createLeaveRequestDto.attachmentId) : undefined,
+          status: LeaveStatus.PENDING,
+          approvalFlow: [{
+            role: 'Manager',
+            status: 'PENDING',
+            decidedBy: undefined,
+            decidedAt: undefined,
+          }],
         });
 
-        // Update pending balance atomically
-        const entitlement = await this.getLeaveEntitlement(employeeId, leaveTypeId);
+        // Update pending balance atomically using ObjectIds
+        const entitlement = await this.getLeaveEntitlement(employeeObjectId as any, leaveTypeObjectId as any);
         await this.leaveEntitlementModel.findByIdAndUpdate(
           entitlement._id,
           { $inc: { pending: durationDays } },
@@ -605,7 +647,11 @@ async rejectLeaveRequest(rejectLeaveRequestDto: RejectLeaveRequestDto, user: any
 
 
 async createLeaveAdjustment(createLeaveAdjustmentDto: any): Promise<LeaveAdjustmentDocument> {
-  const newLeaveAdjustment = new this.leaveAdjustmentModel(createLeaveAdjustmentDto);
+  // Ensure employeeId (and any other id fields) are ObjectId before creation
+  const doc: any = { ...createLeaveAdjustmentDto };
+  if (doc.employeeId) doc.employeeId = this.toObjectId(doc.employeeId);
+  if (doc.leaveTypeId) doc.leaveTypeId = this.toObjectId(doc.leaveTypeId);
+  const newLeaveAdjustment = new this.leaveAdjustmentModel(doc);
   return await newLeaveAdjustment.save(); 
 }
 
@@ -626,8 +672,12 @@ async deleteLeaveAdjustment(id: string): Promise<LeaveAdjustmentDocument> {
 
 
 async createLeaveEntitlement(createLeaveEntitlementDto: CreateLeaveEntitlementDto): Promise<LeaveEntitlementDocument> {
-  const newLeaveEntitlement = new this.leaveEntitlementModel(createLeaveEntitlementDto);
- return await newLeaveEntitlement.save();
+  // Ensure ids are ObjectId when creating entitlement
+  const doc: any = { ...createLeaveEntitlementDto };
+  doc.employeeId = this.toObjectId(createLeaveEntitlementDto.employeeId) as Types.ObjectId;
+  doc.leaveTypeId = this.toObjectId(createLeaveEntitlementDto.leaveTypeId) as Types.ObjectId;
+  const newLeaveEntitlement = new this.leaveEntitlementModel(doc);
+  return await newLeaveEntitlement.save();
 }
 
 
@@ -1678,32 +1728,7 @@ async adjustAccrual(employeeId: string,leaveTypeId: string,adjustmentType: strin
   }
 }
 
-    // REQ-043: Sync with payroll system
-    async syncWithPayroll(leaveRequestId: string, syncType: string, employeeId: string, effectiveDate?: Date, notes?: string): Promise<any> {
-      try {
-        const leaveRequest = await this.leaveRequestModel.findById(leaveRequestId).exec();
-        if (!leaveRequest) {
-          throw new Error(`LeaveRequest with ID ${leaveRequestId} not found`);
-        }
-
-        const entitlement = await this.getLeaveEntitlement(employeeId, leaveRequest.leaveTypeId.toString());
-        const salaryImpact = leaveRequest.durationDays * 100; // Simplified calculation
-
-        return {
-          success: true,
-          syncStatus: 'synced',
-          eventId: leaveRequestId,
-          employeeId,
-          syncType,
-          payrollReference: `PAYROLL-${leaveRequestId}`,
-          salaryImpact,
-          timestamp: new Date(),
-          notes,
-        };
-      } catch (error) {
-        throw new Error(`Failed to sync with payroll: ${(error as any).message}`);
-      }
-    }
+   
 
     // Business Rule: Calculate leave duration net of non-working days (weekends and holidays)
     private async calculateWorkingDays(startDate: Date, endDate: Date, employeeId: string): Promise<number> {
