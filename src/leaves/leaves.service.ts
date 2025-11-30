@@ -413,44 +413,53 @@ async isBlockedDateRange(from: string, to: string): Promise<boolean> {
     }
 
     // Phase 2: Helper - Validate leave request (balance, overlaps)
-    private async validateLeaveRequest(
-        employeeId: string,
-        leaveTypeId: string,
-        startDate: Date,
-        endDate: Date,
-        durationDays: number
-    ): Promise<{ isValid: boolean; errorMessage?: string }> {
-        const entitlement = await this.getLeaveEntitlement(employeeId, leaveTypeId);
-        const availableBalance = entitlement.remaining - entitlement.pending;
-        
-        if (availableBalance < durationDays) {
-            return {
-                isValid: false,
-                errorMessage: `Insufficient leave balance. Available: ${availableBalance} days, Requested: ${durationDays} days.`,
-            };
-        }
+private async validateLeaveRequest(
+  employeeId: string,
+  leaveTypeId: string,
+  startDate: Date,
+  endDate: Date,
+  durationDays: number,
+  excludeRequestId?: string, // 👈 NEW optional param
+): Promise<{ isValid: boolean; errorMessage?: string }> {
+  const entitlement = await this.getLeaveEntitlement(employeeId, leaveTypeId);
+  const availableBalance = entitlement.remaining - entitlement.pending;
+  
+  if (availableBalance < durationDays) {
+    return {
+      isValid: false,
+      errorMessage: `Insufficient leave balance. Available: ${availableBalance} days, Requested: ${durationDays} days.`,
+    };
+  }
 
-        // Check for overlapping leave requests
-        const overlappingRequests = await this.leaveRequestModel.find({
-            employeeId: new Types.ObjectId(employeeId),
-            status: { $in: [LeaveStatus.PENDING, LeaveStatus.APPROVED] },
-            $or: [
-                {
-                    'dates.from': { $lte: endDate },
-                    'dates.to': { $gte: startDate },
-                },
-            ],
-        }).exec();
+  // Build base query
+  const query: any = {
+    employeeId: new Types.ObjectId(employeeId),
+    status: { $in: [LeaveStatus.PENDING, LeaveStatus.APPROVED] },
+    $or: [
+      {
+        'dates.from': { $lte: endDate },
+        'dates.to': { $gte: startDate },
+      },
+    ],
+  };
 
-        if (overlappingRequests.length > 0) {
-            return {
-                isValid: false,
-                errorMessage: 'Leave request overlaps with existing approved or pending leave requests.',
-            };
-        }
+  // 👇 Exclude the current request when updating
+  if (excludeRequestId) {
+    query._id = { $ne: new Types.ObjectId(excludeRequestId) };
+  }
 
-        return { isValid: true };
-    }
+  const overlappingRequests = await this.leaveRequestModel.find(query).exec();
+
+  if (overlappingRequests.length > 0) {
+    return {
+      isValid: false,
+      errorMessage: 'Leave request overlaps with existing approved or pending leave requests.',
+    };
+  }
+
+  return { isValid: true };
+}
+
 
     // Phase 2: REQ-020 - Get Line Manager/Department Head ID
 
@@ -468,45 +477,72 @@ async isBlockedDateRange(from: string, to: string): Promise<boolean> {
     // Phase 2: REQ-017 - Modify an existing leave request (only for pending requests)
     
     async updateLeaveRequest(id: string, updateLeaveRequestDto: UpdateLeaveRequestDto): Promise<LeaveRequestDocument> {
-      const leaveRequest = await this.leaveRequestModel.findById(id).exec();
+  const leaveRequest = await this.leaveRequestModel.findById(id).exec();
 
-      if (!leaveRequest) {
-        throw new Error(`LeaveRequest with ID ${id} not found`);
-      }
+  if (!leaveRequest) {
+    throw new Error(`LeaveRequest with ID ${id} not found`);
+  }
 
-      if (leaveRequest.status !== LeaveStatus.PENDING) {
-        throw new Error('Only pending requests can be modified');
-      }
+  if (leaveRequest.status !== LeaveStatus.PENDING) {
+    throw new Error('Only pending requests can be modified');
+  }
 
-      // If duration changed, update pending balance atomically
-      if (updateLeaveRequestDto.durationDays && updateLeaveRequestDto.durationDays !== leaveRequest.durationDays) {
-        const entitlement = await this.getLeaveEntitlement(
-          leaveRequest.employeeId.toString(),
-          leaveRequest.leaveTypeId.toString()
-        );
-        const delta = updateLeaveRequestDto.durationDays - leaveRequest.durationDays; // positive => increase pending
-        await this.leaveEntitlementModel.findByIdAndUpdate(
-          entitlement._id,
-          { $inc: { pending: delta } },
-          { new: true }
-        ).exec();
-      }
+  // 🔹 Determine the new dates & duration (use updated values if provided, otherwise existing ones)
+  const newDates = updateLeaveRequestDto.dates ?? leaveRequest.dates;
+  const newStartDate = new Date(newDates.from);
+  const newEndDate = new Date(newDates.to);
+  const newDurationDays = updateLeaveRequestDto.durationDays ?? leaveRequest.durationDays;
 
-      const updatedLeaveRequest = await this.leaveRequestModel
-        .findByIdAndUpdate(id, updateLeaveRequestDto, { new: true })
-        .exec();
+  // 🔹 Re-validate balance + overlapping requests, excluding this request's own id
+  const validationResult = await this.validateLeaveRequest(
+    leaveRequest.employeeId.toString(),
+    leaveRequest.leaveTypeId.toString(),
+    newStartDate,
+    newEndDate,
+    newDurationDays,
+    leaveRequest._id.toString(), // 👈 exclude this request from overlap query
+  );
 
-      if (!updatedLeaveRequest) {
-        throw new Error(`LeaveRequest with ID ${id} not found`);
-      }
+  if (!validationResult.isValid) {
+    throw new Error(validationResult.errorMessage);
+  }
 
-    // REQ-030: Notify employee about the update
-      await this.notifyStakeholders(updatedLeaveRequest, 'modified');
+  // 🔹 If duration changed, update pending balance atomically
+  if (
+    updateLeaveRequestDto.durationDays &&
+    updateLeaveRequestDto.durationDays !== leaveRequest.durationDays
+  ) {
+    const entitlement = await this.getLeaveEntitlement(
+      leaveRequest.employeeId.toString(),
+      leaveRequest.leaveTypeId.toString(),
+    );
+    const delta = updateLeaveRequestDto.durationDays - leaveRequest.durationDays; // positive => increase pending
+    await this.leaveEntitlementModel
+      .findByIdAndUpdate(
+        entitlement._id,
+        { $inc: { pending: delta } },
+        { new: true },
+      )
+      .exec();
+  }
 
-      return updatedLeaveRequest;
-    }
+  // 🔹 Finally apply the update
+  const updatedLeaveRequest = await this.leaveRequestModel
+    .findByIdAndUpdate(id, updateLeaveRequestDto, { new: true })
+    .exec();
+
+  if (!updatedLeaveRequest) {
+    throw new Error(`LeaveRequest with ID ${id} not found`);
+  }
+
+  // REQ-030: Notify employee about the update
+  await this.notifyStakeholders(updatedLeaveRequest, 'modified');
+
+  return updatedLeaveRequest;
+}
 
 
+    // Phase 2: REQ-019 - Delete a leave request (only for pending requests)
 
 async deleteLeaveRequest(id: string): Promise<LeaveRequestDocument> {
   const leaveRequest = await this.leaveRequestModel.findById(id).exec();
@@ -800,7 +836,7 @@ private applyRoundingRule(amount: number, roundingRule: RoundingRule): number {
   }
 }
  
-
+//next method
 async assignPersonalizedEntitlement(
   employeeId: string,
   leaveTypeId: string,
