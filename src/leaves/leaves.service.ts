@@ -721,7 +721,7 @@ async calculateAccrual(employeeId: string, leaveTypeId: string, accrualMethod: A
   }
 
   // Get leave policy for rounding rule and monthly rate
-  const leavePolicy = await this.leavePolicyModel.findOne({ leaveTypeId }).exec();
+  const leavePolicy = await this.leavePolicyModel.findOne({ leaveTypeId: new Types.ObjectId(leaveTypeId) }).exec();
   if (!leavePolicy) {
     throw new Error(`Leave policy for leave type ${leaveTypeId} not found`);
   }
@@ -1489,7 +1489,7 @@ async updateLeaveType(
           const previousBalance = entitlement.remaining;
 
           // Get policy for rounding rule
-          const leavePolicy = await this.leavePolicyModel.findOne({ leaveTypeId }).exec();
+          const leavePolicy = await this.leavePolicyModel.findOne({ leaveTypeId: new Types.ObjectId(leaveTypeId) }).exec();
           const roundingRule = leavePolicy?.roundingRule || RoundingRule.NONE;
           const roundedAmount = this.applyRoundingRule(accrualAmount, roundingRule);
 
@@ -1548,7 +1548,7 @@ async autoAccrueAllEmployees(
         const previousBalance = entitlement.remaining;
 
         // Get policy for rounding rule
-        const leavePolicy = await this.leavePolicyModel.findOne({ leaveTypeId }).exec();
+        const leavePolicy = await this.leavePolicyModel.findOne({ leaveTypeId: new Types.ObjectId(leaveTypeId) }).exec();
         const roundingRule = leavePolicy?.roundingRule || RoundingRule.NONE;
         const roundedAmount = this.applyRoundingRule(accrualAmount, roundingRule);
 
