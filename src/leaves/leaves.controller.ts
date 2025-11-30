@@ -31,6 +31,8 @@ import { SyncWithPayrollDto } from './dto/SyncWithPayroll.dto';
 import { Roles } from './decorators/roles.decorator';
 import { RolesGuard } from './guards/roles.guard';
 import { SystemRole } from '../employee-profile/enums/employee-profile.enums';
+import { AccrualMethod } from './enums/accrual-method.enum';
+import { LeaveEntitlementDocument } from './models/leave-entitlement.schema';
 
 @Controller('leaves')
 export class LeaveController {
@@ -116,8 +118,8 @@ export class LeaveController {
   }
 
   @Delete('request/:id')
-  @UseGuards(RolesGuard)
-  @Roles(SystemRole.DEPARTMENT_EMPLOYEE, SystemRole.HR_ADMIN)
+  //@UseGuards(RolesGuard)
+ //@Roles(SystemRole.DEPARTMENT_EMPLOYEE, SystemRole.HR_ADMIN)
   async deleteLeaveRequest(@Param('id') id: string) {
     return await this.leavesService.deleteLeaveRequest(id);
   }
@@ -249,8 +251,8 @@ export class LeaveController {
   }
 
   @Post('request/process-multiple')
-  @UseGuards(RolesGuard)
-  @Roles(SystemRole.HR_MANAGER, SystemRole.HR_ADMIN)
+  //@UseGuards(RolesGuard)
+  //@Roles(SystemRole.HR_MANAGER, SystemRole.HR_ADMIN)
   async processMultipleLeaveRequests(@Body() processDto: ProcessMultipleRequestsDto) {
     return await this.leavesService.processMultipleLeaveRequests(
       processDto.leaveRequestIds,
@@ -427,6 +429,38 @@ export class LeaveController {
     );
   }
 
+    @Post('accrual')
+    async calculateAccrual(@Body() body: { employeeId: string; leaveTypeId: string; accrualMethod: AccrualMethod }) {
+    const { employeeId, leaveTypeId, accrualMethod } = body;
+    return await this.leavesService.calculateAccrual(employeeId, leaveTypeId, accrualMethod);
+  }
+
+   @Post('assign-personalized-entitlement')
+   async assignPersonalizedEntitlement(
+   @Body() body: {
+      employeeId: string;
+      leaveTypeId: string;
+      personalizedEntitlement: number;
+    }
+  ): Promise<LeaveEntitlementDocument> {
+    const { employeeId, leaveTypeId, personalizedEntitlement } = body;
+    return await this.leavesService.assignPersonalizedEntitlement(
+      employeeId,
+      leaveTypeId,
+      personalizedEntitlement
+    );
+  }
+
+  @Post('request/:id/finalize')
+  async finalizeApprovedLeaveRequest(
+  @Param('id') leaveRequestId: string,
+  @Body() finalizeRequestDto: { employeeId: string; leaveTypeId: string }
+  ) {
+    const { employeeId, leaveTypeId } = finalizeRequestDto;
+    return await (this.leavesService as any).finalizeApprovedLeaveRequest(leaveRequestId, employeeId, leaveTypeId);
+  }
+}
+
   // Phase 2: REQ-023 - Delegate approval authority
   // @Post('delegate')
   // @UseGuards(RolesGuard)
@@ -439,4 +473,3 @@ export class LeaveController {
   //     delegateDto.endDate
   //   );
   // }
-}
