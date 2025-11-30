@@ -25,14 +25,13 @@ import { FlagIrregularPatternDto, IrregularPatternAnalysisDto } from './dto/Flag
 import { AutoAccrueLeaveDto, AccrueAllEmployeesDto } from './dto/AutoAccrueLeave.dto';
 import { RunCarryForwardDto } from './dto/CarryForward.dto';
 import { AccrualAdjustmentDto, AccrualSuspensionDto } from './dto/AccrualAdjustment.dto';
-import { SyncWithPayrollDto } from './dto/SyncWithPayroll.dto';
 //import { DelegateApprovalDto } from './dto/DelegateApproval.dto';
 
 import { Roles } from './decorators/roles.decorator';
 import { RolesGuard } from './guards/roles.guard';
 import { SystemRole } from '../employee-profile/enums/employee-profile.enums';
 import { AccrualMethod } from './enums/accrual-method.enum';
-import { LeaveEntitlementDocument } from './models/leave-entitlement.schema';
+import { CalculateAccrualDto } from './dto/CalculateAccrual.Dto';
 
 @Controller('leaves')
 export class LeaveController {
@@ -94,8 +93,8 @@ export class LeaveController {
                           // Leave Request Endpoints
 
   @Post('request')
-  @UseGuards(RolesGuard)
-  @Roles(SystemRole.DEPARTMENT_EMPLOYEE, SystemRole.DEPARTMENT_HEAD)
+  //@UseGuards(RolesGuard)
+  //@Roles(SystemRole.DEPARTMENT_EMPLOYEE, SystemRole.DEPARTMENT_HEAD)
   async createLeaveRequest(@Body() createLeaveRequestDto: CreateLeaveRequestDto) {
     return await this.leavesService.createLeaveRequest(createLeaveRequestDto);
   }
@@ -118,16 +117,16 @@ export class LeaveController {
   }
 
   @Delete('request/:id')
-  //@UseGuards(RolesGuard)
- //@Roles(SystemRole.DEPARTMENT_EMPLOYEE, SystemRole.HR_ADMIN)
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.DEPARTMENT_EMPLOYEE, SystemRole.HR_ADMIN)
   async deleteLeaveRequest(@Param('id') id: string) {
     return await this.leavesService.deleteLeaveRequest(id);
   }
 
   // Leave Entitlement Endpoints
   @Post('entitlement')
-  @UseGuards(RolesGuard)
-  @Roles(SystemRole.HR_ADMIN)
+  // @UseGuards(RolesGuard)
+  // @Roles(SystemRole.HR_ADMIN)
   async createLeaveEntitlement(@Body() createLeaveEntitlementDto: CreateLeaveEntitlementDto) {
     return await this.leavesService.createLeaveEntitlement(createLeaveEntitlementDto);
   }
@@ -176,14 +175,14 @@ export class LeaveController {
 
   // Leave Type Endpoints
   @Post('category')
-  @UseGuards(RolesGuard)
-  @Roles(SystemRole.HR_ADMIN, SystemRole.LEGAL_POLICY_ADMIN)
+  // @UseGuards(RolesGuard)
+  // @Roles(SystemRole.HR_ADMIN, SystemRole.LEGAL_POLICY_ADMIN)
   async createLeaveCategory(@Body() createLeaveCategoryDto: CreateLeaveCategoryDto) {
     return await this.leavesService.createLeaveCategory(createLeaveCategoryDto);
   }
   @Post('type')
-  @UseGuards(RolesGuard)
-  @Roles(SystemRole.HR_ADMIN, SystemRole.LEGAL_POLICY_ADMIN)
+  //@UseGuards(RolesGuard)
+  //@Roles(SystemRole.HR_ADMIN, SystemRole.LEGAL_POLICY_ADMIN)
   async createLeaveType(@Body() createLeaveTypeDto: CreateLeaveTypeDto) {
     return await this.leavesService.createLeaveType(createLeaveTypeDto);
   }
@@ -251,8 +250,8 @@ export class LeaveController {
   }
 
   @Post('request/process-multiple')
-  //@UseGuards(RolesGuard)
-  //@Roles(SystemRole.HR_MANAGER, SystemRole.HR_ADMIN)
+  @UseGuards(RolesGuard)
+  @Roles(SystemRole.HR_MANAGER, SystemRole.HR_ADMIN)
   async processMultipleLeaveRequests(@Body() processDto: ProcessMultipleRequestsDto) {
     return await this.leavesService.processMultipleLeaveRequests(
       processDto.leaveRequestIds,
@@ -415,49 +414,13 @@ export class LeaveController {
     );
   }
 
-  // REQ-043: Sync with payroll
-  @Post('sync-payroll')
-  @UseGuards(RolesGuard)
-  @Roles(SystemRole.HR_ADMIN, SystemRole.HR_MANAGER, SystemRole.PAYROLL_SPECIALIST)
-  async syncWithPayroll(@Body() syncDto: SyncWithPayrollDto) {
-    return await this.leavesService.syncWithPayroll(
-      syncDto.leaveRequestId,
-      syncDto.syncType,
-      syncDto.employeeId,
-      syncDto.effectiveDate,
-      syncDto.notes
-    );
-  }
-
-    @Post('accrual')
-    async calculateAccrual(@Body() body: { employeeId: string; leaveTypeId: string; accrualMethod: AccrualMethod }) {
-    const { employeeId, leaveTypeId, accrualMethod } = body;
-    return await this.leavesService.calculateAccrual(employeeId, leaveTypeId, accrualMethod);
-  }
-
-   @Post('assign-personalized-entitlement')
-   async assignPersonalizedEntitlement(
-   @Body() body: {
-      employeeId: string;
-      leaveTypeId: string;
-      personalizedEntitlement: number;
-    }
-  ): Promise<LeaveEntitlementDocument> {
-    const { employeeId, leaveTypeId, personalizedEntitlement } = body;
-    return await this.leavesService.assignPersonalizedEntitlement(
-      employeeId,
-      leaveTypeId,
-      personalizedEntitlement
-    );
-  }
-
-  @Post('request/:id/finalize')
-  async finalizeApprovedLeaveRequest(
-  @Param('id') leaveRequestId: string,
-  @Body() finalizeRequestDto: { employeeId: string; leaveTypeId: string }
-  ) {
-    const { employeeId, leaveTypeId } = finalizeRequestDto;
-    return await (this.leavesService as any).finalizeApprovedLeaveRequest(leaveRequestId, employeeId, leaveTypeId);
+  @Post('calculate-accrual')
+  async calculateAccrual(
+    @Body() calculateAccrualDto: CalculateAccrualDto
+  ): Promise<void> {
+    const { employeeId, leaveTypeId, accrualMethod } = calculateAccrualDto;
+    // No need for type casting; the DTO should already be typed correctly
+    await this.leavesService.calculateAccrual(employeeId, leaveTypeId, accrualMethod);
   }
 }
 
